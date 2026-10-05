@@ -2081,10 +2081,10 @@ tbody tr:hover{background:rgba(255,255,255,.45)}
         </div>
 
         <div style="font-size:.67rem;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:var(--light);margin-bottom:10px;">Servos</div>
-        <div id="usr-grid-servos" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-bottom:22px;"></div>
+        <div id="usr-grid-servos" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;align-items:start;margin-bottom:22px;"></div>
 
         <div style="font-size:.67rem;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:var(--light);margin-bottom:10px;">Administradores</div>
-        <div id="usr-grid-admins" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;"></div>
+        <div id="usr-grid-admins" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;align-items:start;"></div>
 
         <div style="margin-top:18px;">
           <button class="btn btn-nm btn-sm" onclick="document.getElementById('nao-assumidas-wrap').classList.toggle('hidden')">
@@ -2899,6 +2899,10 @@ const DB = {
       // Toda alteração em carta registra o horário do servidor: é o que
       // permite cada aparelho baixar só o que mudou (sincronização leve).
       await updateDoc(doc(window._FB.db,col,id), col==='cartas'?{...data,atualizadoEm:serverTimestamp()}:data);
+      // Carta que saiu de "pronta" (voltou para edição, foi liberada ou
+      // excluída) deixa de contar como impressa: quando ficar pronta de
+      // novo, o botão Imprimir do encontrista volta a ter cor.
+      if(col==='cartas' && data.status && data.status!=='pronta') _desmarcarImpressao(id);
     }catch(e){ console.error('DB.update',col,id,e); toast('Erro ao atualizar','err'); }
   },
 
@@ -3603,21 +3607,8 @@ window.adminTab=tab=>{
   const acts=document.getElementById('admin-tab-actions');
   if(acts){
     acts.querySelectorAll('.extra-btn').forEach(b=>b.remove());
-    if(tab==='cartas'){
-      const refreshBtn=document.createElement('button');
-      refreshBtn.className='btn btn-nm btn-sm extra-btn';
-      refreshBtn.title='Força atualizar a lista de cartas prontas agora';
-      refreshBtn.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Atualizar prontas';
-      refreshBtn.onclick=async()=>{
-        refreshBtn.disabled=true;
-        refreshBtn.innerHTML='Atualizando...';
-        await window._recarregarCartasProntas?.();
-        toast('Lista de cartas prontas atualizada!','ok');
-        refreshBtn.disabled=false;
-        refreshBtn.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Atualizar prontas';
-      };
-      acts.appendChild(refreshBtn);
-    }
+    // O botão "Atualizar prontas" foi removido: cada clique baixava TODAS as
+    // cartas de novo, e a lista já se atualiza sozinha em tempo real.
   }
   if(tab==='cartas')renderAdminCartas();
   if(tab==='encontristas'){renderAdminEncs();carregarEncDados();}
@@ -3724,7 +3715,9 @@ window.filtrarAtivas=()=>{
 // ══ CONTROLE DE IMPRESSÃO (sem texto, sem filtro: só a cor do botão) ══
 // editor/impressoes guarda, por encontrista, os IDs das cartas que já
 // saíram numa impressão. Botão sem cor = todas as prontas já impressas
-// (vai para o fim da lista). Uma carta nova ficou pronta → volta a ter cor.
+// (vai para o fim da lista). Volta a ter cor quando uma carta nova fica
+// pronta OU quando uma carta já impressa volta para edição e fica pronta
+// de novo (ver _desmarcarImpressao).
 let _impressoes={};
 let _impUnsub=null;
 function _encImpresso(nome, idsProntas){
@@ -3741,6 +3734,27 @@ function _registrarImpressao(nome, ids){
     const {doc,setDoc}=window._FB;
     setDoc(doc(window._FB.db,'editor','impressoes'),{[nome]:_impressoes[nome]},{merge:true});
   }catch(e){ console.warn('impressoes:',e.message); }
+}
+// Tira uma carta da lista de "já impressas" (de qualquer encontrista).
+async function _desmarcarImpressao(cartaId){
+  if(!cartaId||!window._FB) return;
+  try{
+    const {doc,getDoc,setDoc}=window._FB;
+    const ref=doc(window._FB.db,'editor','impressoes');
+    let mapa=_impressoes;
+    if(!_impUnsub){ // lista ainda não carregada neste aparelho
+      const sn=await getDoc(ref);
+      mapa=sn.exists()?(sn.data()||{}):{};
+    }
+    const mudou={};
+    Object.entries(mapa).forEach(([nome,ids])=>{
+      if(Array.isArray(ids)&&ids.includes(cartaId)) mudou[nome]=ids.filter(x=>x!==cartaId);
+    });
+    if(!Object.keys(mudou).length) return;
+    Object.assign(_impressoes,mudou);
+    window.filtrarProntas?.();
+    await setDoc(ref,mudou,{merge:true});
+  }catch(e){ console.warn('impressoes (desmarcar):',e.message); }
 }
 function _ouvirImpressoes(){
   if(_impUnsub||!window._FB) return;
@@ -3959,24 +3973,39 @@ window.assumirCarta=async id=>{
 };
 
 window.liberarCarta=async id=>{
-  if(!confirm('Liberar esta carta para outro servo assumir?'))return;
   const carta=cartasData.find(c=>c.id===id);
   if(!carta) return;
-  // Otimistic update — atualiza tela imediatamente
   const _uidAntes=carta.servoUid;
-  carta.status='pendente';
-  carta.servoUid=null;
-  carta.servoNome=null;
-  // Remove de prontas se estava lá
-  _cartasProntas=_cartasProntas.filter(c=>c.id!==id);
-  // Garante que está em ativas
-  if(!_cartasAtivas.find(c=>c.id===id)) _cartasAtivas.unshift(carta);
+  // "Assumir" pega todas as cartas do encontrista de uma vez; "Liberar"
+  // devolve todas as que estão com o mesmo servo, senão o encontrista
+  // continuava preso a ele pelas outras cartas.
+  const grupo=_uidAntes
+    ? cartasData.filter(c=>c.para===carta.para && c.servoUid===_uidAntes)
+    : [carta];
+  if(!grupo.includes(carta)) grupo.push(carta);
+  const msg=grupo.length>1
+    ? `Liberar as ${grupo.length} cartas de ${carta.para} que estão com ${carta.servoNome||'este servo'}?`
+    : 'Liberar esta carta para outro servo assumir?';
+  if(!confirm(msg))return;
+  // Otimistic update — atualiza tela imediatamente.
+  // A carta clicada volta para "pendente"; as demais já prontas continuam prontas.
+  const gravar=grupo.map(c=>{
+    const novoStatus=(c.id===id||c.status!=='pronta')?'pendente':'pronta';
+    c.status=novoStatus;
+    c.servoUid=null;
+    c.servoNome=null;
+    if(novoStatus==='pendente'){
+      _cartasProntas=_cartasProntas.filter(x=>x.id!==c.id);
+      if(!_cartasAtivas.find(x=>x.id===c.id)) _cartasAtivas.unshift(c);
+    }
+    return {id:c.id,status:novoStatus};
+  });
   filtrarAtivas();
   filtrarProntas();
   closeM('m-carta');
-  toast('Carta liberada!','ok');
+  toast(grupo.length>1?`${grupo.length} cartas liberadas!`:'Carta liberada!','ok');
   // Grava em segundo plano
-  DB.update('cartas',id,{servoUid:null,servoNome:null,status:'pendente'})
+  Promise.all(gravar.map(g=>DB.update('cartas',g.id,{servoUid:null,servoNome:null,status:g.status})))
     .then(()=>_revogarAcessoServo(carta.para,_uidAntes))
     .catch(e=>{
       console.error('Erro ao liberar carta:',e.message);
@@ -4248,14 +4277,73 @@ window.restaurarCartaLixeira=async id=>{
   if(typeof renderLixeira==='function') renderLixeira();
 };
 
-// Exclusão definitiva — só a partir da lixeira, com confirmação reforçada
+// Exclusão definitiva — só a partir da lixeira, sem confirmação (pedido do
+// admin): um clique apaga a carta e tudo o que pertence só a ela — a página
+// no editor, a referência no índice do encontrista e as fotos no Storage.
+// Imagens de templates nunca são apagadas (são compartilhadas).
 window.excluirDefinitivamente=async id=>{
-  setTimeout(()=>DB.setCfg('syncVersao',Date.now()),1500);
-  const carta=cartasData.find(c=>c.id===id);
-  const nomeConf=prompt(`Isso apaga a carta PARA SEMPRE, sem possibilidade de recuperação.\nDigite o nome do remetente para confirmar: "${carta?.nome||''}"`);
-  if(nomeConf!==carta?.nome){ toast('Nome não confere. Cancelado.','wrn'); return; }
-  await DB.del('cartas',id);
-  toast('Carta excluída permanentemente.','ok');
+  if(CU?.perfil!=='admin'){ toast('Ação restrita ao administrador','err'); return; }
+  const {db,doc,getDoc,setDoc,deleteDoc,ref,deleteObject,st}=window._FB;
+  const btn=document.querySelector(`[onclick="excluirDefinitivamente('${id}')"]`);
+  if(btn){ if(btn.disabled) return; btn.disabled=true; btn.textContent='Excluindo...'; }
+  try{
+    // A carta na lixeira não fica na lista local — busca direto no banco
+    const cSnap=await getDoc(doc(db,'cartas',id));
+    const carta=cSnap.exists()?cSnap.data():{};
+
+    // 1) Reúne os arquivos do Storage que são só desta carta
+    const arquivos=new Set();
+    const _path=u=>{
+      if(!u||typeof u!=='string') return null;
+      let p=u;
+      if(u.startsWith('http')){
+        if(!u.includes('firebasestorage')) return null;
+        try{ p=decodeURIComponent(u.split('/o/')[1]?.split('?')[0]||''); }catch(_){ return null; }
+      }
+      return (p.startsWith('fotos/')||p.startsWith('editor/'))?p:null;
+    };
+    const _add=u=>{ const p=_path(u); if(p) arquivos.add(p); };
+    _add(carta.foto); _add(carta.cropPath);
+    let pgSnap=null;
+    try{ pgSnap=await getDoc(doc(db,'editor_paginas',id)); }catch(_){}
+    if(pgSnap?.exists()){
+      (pgSnap.data()?.page?.elements||[]).forEach(el=>{ _add(el.src); _add(el.origSrc); _add(el.cropPath); });
+    }
+
+    // 2) Apaga a carta (se isto falhar, nada mais é apagado)
+    await deleteDoc(doc(db,'cartas',id));
+
+    // 3) Apaga o que sobrou dela — falhas aqui não desfazem a exclusão
+    const pend=[];
+    try{ if(pgSnap?.exists()) await deleteDoc(doc(db,'editor_paginas',id)); }catch(e){ pend.push('página do editor'); }
+    if(carta.para){
+      try{
+        const key='enc_'+String(carta.para).replace(/\W/g,'_');
+        const idxSnap=await getDoc(doc(db,'editor_index',key));
+        if(idxSnap.exists() && (idxSnap.data().cartaIds||[]).includes(id)){
+          const atuais=(idxSnap.data().cartaIds||[]).filter(x=>x!==id);
+          await setDoc(doc(db,'editor_index',key),{cartaIds:atuais,updatedAt:new Date().toISOString()});
+          if(window._idxCache) window._idxCache[key]=atuais;
+        }
+      }catch(e){ pend.push('índice do editor'); }
+    }
+    let fotosFalha=0;
+    for(const p of arquivos){
+      try{ await deleteObject(ref(st,p)); }
+      catch(e){ if(e?.code!=='storage/object-not-found'){ fotosFalha++; console.warn('Foto não apagada:',p,e.message); } }
+    }
+    if(fotosFalha) pend.push(fotosFalha+' foto(s)');
+    window._removerCartaLocal?.(id);
+    if(carta.servoUid && carta.para){ try{ await _revogarAcessoServo(carta.para,carta.servoUid); }catch(_){} }
+    // Avisa os outros aparelhos para recarregarem a lista de cartas
+    try{ await DB.setCfg('syncVersao',Date.now()); }catch(_){}
+
+    if(pend.length) toast('Carta excluída, mas não foi possível apagar: '+pend.join(', ')+'.','wrn');
+    else toast('Carta excluída permanentemente.','ok');
+  }catch(e){
+    console.error('Erro ao excluir definitivamente:',e);
+    toast('Erro ao excluir — a carta continua na lixeira.','err');
+  }
   if(typeof renderLixeira==='function') renderLixeira();
 };
 
@@ -4329,24 +4417,32 @@ async function _revogarAcessoServo(nomeEnc, uid){
 let _encDadosEm=0;
 async function carregarEncDados(forcar){
   if(CU?.perfil!=='admin' && CU?.perfil!=='servo') return;
-  if(CU?.perfil==='admin' && !forcar && _encDadosEm && Date.now()-_encDadosEm<10*60*1000){ renderAdminEncs(); return; }
+  // Admin e servo veem os dados de TODOS os encontristas (servo só leitura).
+  // A lista completa fica guardada por 10 min para não gastar leituras à toa.
+  if(!forcar && _encDadosEm && Date.now()-_encDadosEm<10*60*1000){ renderAdminEncs(); return; }
   try{
     const m={};
-    if(CU?.perfil==='servo'){
+    let completo=false;
+    try{
+      const {getDocs,collection}=window._FB;
+      const snap=await getDocs(collection(window._FB.db,'encontristas_dados'));
+      snap.docs.forEach(d=>{m[d.id]=d.data();});
+      completo=true;
+    }catch(e){
+      if(CU?.perfil!=='servo') throw e;
+      // Regra antiga ainda publicada (servo só lê os que assumiu): carrega
+      // o que for permitido em vez de deixar a aba vazia.
+      console.warn('encontristas_dados (lista completa negada ao servo):',e.message);
       const {doc,getDoc}=window._FB;
       for(const nome of _meusEncontristasNomes()){
         const enc=_encPorNome(nome); if(!enc) continue;
         const carta=cartasData.find(c=>c.para===nome && c.servoUid===CU.uid);
-        await _garantirAcessoServo(nome, carta?.id); // cobre cartas assumidas antes desta versão
+        await _garantirAcessoServo(nome, carta?.id);
         try{ const sn=await getDoc(doc(window._FB.db,'encontristas_dados',enc.id)); if(sn.exists()) m[enc.id]=sn.data(); }catch(_){}
       }
-    } else {
-      const {getDocs,collection}=window._FB;
-      const snap=await getDocs(collection(window._FB.db,'encontristas_dados'));
-      snap.docs.forEach(d=>{m[d.id]=d.data();});
     }
     _encDados=m;
-    if(CU?.perfil==='admin') _encDadosEm=Date.now();
+    if(completo) _encDadosEm=Date.now();
     renderAdminEncs();
     if(CU?.perfil!=='admin') return;
     const mapaG={};
@@ -4431,12 +4527,8 @@ function renderAdminEncs(){
     wrap.innerHTML=`<div class="empty-state"><div class="empty-ico"><svg><use href="#ico-users"/></svg></div><div class="empty-ttl">Nenhum encontrista</div><div class="empty-sub">Importe a planilha de inscrições ou adicione manualmente.</div></div>`;return;
   }
   const busca=_normNome(document.getElementById('encx-busca')?.value||'');
-  const meus=_ehAdmin?null:new Set(_meusEncontristasNomes().map(_normNome));
-  const base=_ehAdmin?encsData:encsData.filter(e=>meus.has(_normNome(e.nome)));
-  if(!_ehAdmin){
-    if(cnt) cnt.innerHTML=`<b>${base.length}</b> encontrista${base.length!==1?'s':''} sob sua responsabilidade`;
-    if(!base.length){wrap.innerHTML=`<div class="empty-state"><div class="empty-sub">Você ainda não assumiu nenhum encontrista. Assuma as cartas em Homenagens para ver os contatos aqui.</div></div>`;return;}
-  }
+  // Servo vê todos os encontristas, igual ao admin (sem editar nem excluir)
+  const base=encsData;
   const lista=busca?base.filter(e=>_normNome(e.nome).includes(busca)):base;
   if(!lista.length){wrap.innerHTML=`<div class="empty-state"><div class="empty-sub">Nenhum encontrista encontrado com esse nome.</div></div>`;return;}
   const waIco=`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-12.6 7.3L3 20.5l1.8-5.2A8.4 8.4 0 1 1 21 11.5z"/><path d="M9 9.5c.3 1.8 1.7 3.6 3.6 4.5l1-1 2 .8"/></svg>`;
@@ -4731,7 +4823,7 @@ window.apagarTodosEncs=async()=>{
       await deleteDoc(doc(window._FB.db,'encontristas',e.id));
       try{ await deleteDoc(doc(window._FB.db,'encontristas_dados',e.id)); }catch(_){}
     }
-    _encDados={};
+    _encDados={}; _encDadosEm=0;
     toast('Todos os encontristas foram apagados!','ok');
   }catch(e){toast('Erro: '+e.message,'err');}
 };
@@ -4748,7 +4840,7 @@ window.apagarDadosPessoais=async()=>{
     const {getDocs,collection,deleteDoc,doc}=window._FB;
     const snap=await getDocs(collection(window._FB.db,'encontristas_dados'));
     let n=0; for(const d of snap.docs){ await deleteDoc(doc(window._FB.db,'encontristas_dados',d.id)); n++; }
-    _encDados={}; renderAdminEncs?.();
+    _encDados={}; _encDadosEm=0; renderAdminEncs?.();
     toast(`${n} cadastro${n!==1?'s':''} de dados pessoais apagado${n!==1?'s':''}.`,'ok');
   }catch(e){ toast('Erro: '+e.message,'err'); }
 };

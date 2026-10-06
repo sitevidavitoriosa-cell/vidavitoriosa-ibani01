@@ -372,6 +372,33 @@ select.fi{cursor:pointer}
 
 .enc-group{overflow-y:auto;flex:1;padding:6px 8px}
 .enc-sec{margin-bottom:3px}
+/* ── Recados do admin para os servos ── */
+#recados-topo{padding:10px 22px 0;}
+#recados-topo:empty{display:none;}
+.recado{background:var(--err);color:#fff;border-radius:var(--r-sm);padding:11px 12px 11px 14px;display:flex;align-items:flex-start;gap:10px;margin-bottom:8px;box-shadow:3px 3px 10px rgba(192,88,88,.35);}
+.recado-ico{flex-shrink:0;margin-top:2px;}
+.recado-txt{flex:1;min-width:0;font-size:.86rem;font-weight:700;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;}
+.recado-meta{display:block;font-size:.68rem;font-weight:600;opacity:.85;margin-top:3px;}
+.recado-x{flex-shrink:0;width:28px;height:28px;border-radius:50%;border:none;background:rgba(255,255,255,.2);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.recado-x:hover{background:rgba(255,255,255,.35);}
+.recado-env{display:flex;align-items:center;gap:10px;background:var(--bg);box-shadow:var(--sh-sm);border-radius:var(--r-sm);padding:9px 12px;margin-bottom:8px;font-size:.78rem;}
+.recado-env-t{flex:1;min-width:0;}
+.recado-env-t b{font-weight:800;}
+.recado-env-t span{display:block;color:var(--mid);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.recado-chip{font-size:.66rem;font-weight:800;border-radius:var(--pill);padding:3px 9px;white-space:nowrap;}
+.recado-chip.lido{background:rgba(78,158,110,.15);color:var(--ok);}
+.recado-chip.nao{background:rgba(196,136,58,.15);color:var(--warn);}
+.recado-env button{border:none;background:none;color:var(--light);cursor:pointer;font-size:.72rem;font-weight:700;font-family:inherit;}
+.recado-env button:hover{color:var(--err);}
+/* Aviso de novos encontristas: mesma caixa do recado, em outra cor */
+#encs-novos-topo{padding:10px 22px 0;}
+#encs-novos-topo:empty{display:none;}
+.recado.enc-novos{background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:3px 3px 10px rgba(var(--argb),.35);}
+.recado.enc-novos .recado-txt{white-space:normal;}
+.enc-novos-lista{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px;max-height:118px;overflow-y:auto;}
+.enc-novos-lista span{background:rgba(255,255,255,.22);border-radius:var(--pill);padding:3px 10px;font-size:.74rem;font-weight:700;white-space:nowrap;}
+@media(max-width:700px){#encs-novos-topo{padding:8px 8px 0;}}
+@media(max-width:700px){#recados-topo{padding:8px 8px 0;}}
 /* Botão de imprimir de quem já foi impresso: sem cor, mas funcionando */
 .btn-impresso{filter:grayscale(1);opacity:.55;box-shadow:none !important;}
 .btn-impresso:hover{opacity:.85;}
@@ -1969,6 +1996,8 @@ tbody tr:hover{background:rgba(255,255,255,.45)}
         </button>
       </div>
     </div>
+    <div id="recados-topo" aria-live="polite"></div>
+    <div id="encs-novos-topo" aria-live="polite"></div>
     <div class="admin-content">
 
       <!-- Cartas -->
@@ -2078,6 +2107,9 @@ tbody tr:hover{background:rgba(255,255,255,.45)}
           <button class="btn btn-accent btn-sm" onclick="openM('m-usr')">
             <svg width="13" height="13"><use href="#ico-plus"/></svg> Convidar usuário
           </button>
+          <button class="btn btn-nm btn-sm" onclick="abrirRecado()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> Deixar recado
+          </button>
         </div>
 
         <div style="font-size:.67rem;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:var(--light);margin-bottom:10px;">Servos</div>
@@ -2085,6 +2117,9 @@ tbody tr:hover{background:rgba(255,255,255,.45)}
 
         <div style="font-size:.67rem;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:var(--light);margin-bottom:10px;">Administradores</div>
         <div id="usr-grid-admins" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;align-items:start;"></div>
+
+        <div style="font-size:.67rem;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:var(--light);margin:22px 0 10px;">Recados enviados</div>
+        <div id="recados-enviados"></div>
 
         <div style="margin-top:18px;">
           <button class="btn btn-nm btn-sm" onclick="document.getElementById('nao-assumidas-wrap').classList.toggle('hidden')">
@@ -2373,6 +2408,27 @@ tbody tr:hover{background:rgba(255,255,255,.45)}
   </div>
 </div>
 
+<div class="m-ov hidden" id="m-recado">
+  <div class="modal">
+    <div class="mh"><span class="mt">Deixar recado</span><button class="mc" onclick="closeM('m-recado')" aria-label="Fechar"><svg width="13" height="13"><use href="#ico-x"/></svg></button></div>
+    <div class="mb">
+      <div style="display:flex;flex-direction:column;gap:13px;">
+        <div class="fg"><label class="fl" for="recado-para">Para</label>
+          <select class="fi" id="recado-para" onchange="_recadoConta()"></select>
+        </div>
+        <div class="fg"><label class="fl" for="recado-msg">Mensagem</label>
+          <textarea class="fi" id="recado-msg" maxlength="300" rows="5" placeholder="Escreva o recado…" oninput="_recadoConta()" style="resize:vertical;min-height:110px;line-height:1.5;"></textarea>
+          <div style="font-size:.68rem;color:var(--light);text-align:right;margin-top:4px;"><span id="recado-n">0</span>/300</div>
+        </div>
+      </div>
+    </div>
+    <div class="mf">
+      <button class="btn btn-nm btn-sm" onclick="closeM('m-recado')">Cancelar</button>
+      <button class="btn btn-accent btn-sm" id="recado-enviar" onclick="enviarRecado()" disabled>Enviar</button>
+    </div>
+  </div>
+</div>
+
 <div class="m-ov hidden" id="m-usr">
   <div class="modal">
     <div class="mh"><span class="mt">Convidar Usuário</span><button class="mc" onclick="closeM('m-usr')"><svg width="13" height="13"><use href="#ico-x"/></svg></button></div>
@@ -2518,12 +2574,12 @@ tbody tr:hover{background:rgba(255,255,255,.45)}
 //  FIREBASE CONFIG
 // ══════════════════════════════════════════════════════════
 const FB_CONFIG = {
-  apiKey:            "AIzaSyDkxmZc1Ir-rWSmQtKH14NihSzgzJAlzc8",
-  authDomain:        "vidavitoriosa01.firebaseapp.com",
-  projectId:         "vidavitoriosa01",
-  storageBucket:     "vidavitoriosa01.firebasestorage.app",
-  messagingSenderId: "266666618044",
-  appId:             "1:266666618044:web:d230c8c19839ceb1bf34b9"
+  apiKey:            "AIzaSyAmZNgdm29DPTUG-yRZH6QOp8bjWTX7suA",
+  authDomain:        "vida-vitoriosa-8b30e.firebaseapp.com",
+  projectId:         "vida-vitoriosa-8b30e",
+  storageBucket:     "vida-vitoriosa-8b30e.firebasestorage.app",
+  messagingSenderId: "458973176639",
+  appId:             "1:458973176639:web:519ae9535cfc5ef137698a"
 };
 
 // ══════════════════════════════════════════════════════════
@@ -2554,14 +2610,11 @@ function onFbReady(fn){ _fbReady ? fn() : _fbResolvers.push(fn); }
     // Precisa vir antes de getAuth/getFirestore/getStorage.
     // Se falhar, o site segue funcionando (enquanto a exigência
     // não estiver ativada no console do Firebase).
-    // Chave do site (Fraud Defense / reCAPTCHA) do projeto vidavitoriosa01.
-    // Enquanto estiver vazia, o App Check fica desligado e o site funciona normalmente.
-    const APPCHECK_KEY = '';
-    if(APPCHECK_KEY) try{
+    try{
       const { initializeAppCheck, ReCaptchaEnterpriseProvider }
                              = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-check.js');
       initializeAppCheck(app, {
-        provider: new ReCaptchaEnterpriseProvider(APPCHECK_KEY),
+        provider: new ReCaptchaEnterpriseProvider('6LfaVtstAAAAAAVpD_E3aoQRr5lTrdETCafdfaRq'),
         isTokenAutoRefreshEnabled: true
       });
       console.log('%c✦ App Check ativado','color:#4e9e6e;font-weight:bold');
@@ -2796,6 +2849,7 @@ function onFbReady(fn){ _fbReady ? fn() : _fbResolvers.push(fn); }
       window._unsubEncs = ons(q(col(db,'encontristas'),ob('nome')), snap=>{
         encsData = snap.docs.map(d=>({id:d.id,...d.data()}));
         _onEncsUpdate();
+        try{ _checarEncsNovos(snap); }catch(e){ console.warn('aviso de novos encontristas:',e.message); }
       });
 
       // Presença — REMOVIDO A PEDIDO: gerava leituras replicadas para todos
@@ -3474,6 +3528,7 @@ window.doLogout=async()=>{
     if(window._unsubUser)   window._unsubUser();
     if(window._unsubCfgPublic) window._unsubCfgPublic();
   }catch(_e){}
+  _pararRecados();
 
   // Limpa estado
   CU=null; cartasData=[]; encsData=[]; pagesData=[];
@@ -3487,11 +3542,229 @@ window.doLogout=async()=>{
   showLanding();
 };
 
+// ══════════════════════════════════════════════════════════
+//  RECADOS — o admin deixa um recado para um servo (ou para todos);
+//  o servo vê uma caixa vermelha no topo do painel até fechar no X.
+//  Coleção "recados": um documento por destinatário, para que cada
+//  servo feche o seu sem afetar os outros.
+// ══════════════════════════════════════════════════════════
+let _recadosUnsub=null, _recadosMeus=[], _recadosVistos=new Set();
+let _usrsCache=[], _recadosEnv=[];
+const _RECADO_MAX=300;
+function _recadoData(iso){
+  const d=new Date(iso); if(isNaN(d)) return '';
+  return d.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+function _renderRecadosTopo(){
+  const el=document.getElementById('recados-topo'); if(!el) return;
+  el.innerHTML=_recadosMeus.map(r=>`<div class="recado" role="alert">
+      <svg class="recado-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <div class="recado-txt">${esc(r.texto||'')}<span class="recado-meta">Recado de ${esc(r.deNome||'Administrador')}${r.criadoEm?' · '+_recadoData(r.criadoEm):''}</span></div>
+      <button class="recado-x" onclick="fecharRecado('${r.id}')" aria-label="Fechar recado" title="Fechar"><svg width="13" height="13"><use href="#ico-x"/></svg></button>
+    </div>`).join('');
+}
+// Escuta só os recados NÃO lidos endereçados a quem está logado.
+function _ouvirRecados(){
+  if(_recadosUnsub||!window._FB||!CU?.uid) return;
+  const {db,collection,query,where,onSnapshot}=window._FB;
+  let primeira=true;
+  try{
+    _recadosUnsub=onSnapshot(
+      query(collection(db,'recados'),where('paraUid','==',CU.uid),where('lido','==',false)),
+      snap=>{
+        _recadosMeus=snap.docs.map(d=>({id:d.id,...d.data()}))
+          .sort((a,b)=>String(b.criadoEm||'').localeCompare(String(a.criadoEm||'')));
+        const novos=_recadosMeus.filter(r=>!_recadosVistos.has(r.id));
+        _recadosMeus.forEach(r=>_recadosVistos.add(r.id));
+        if(!primeira && novos.length) toast('Você recebeu um recado','wrn');
+        primeira=false;
+        _renderRecadosTopo();
+      },
+      e=>{ console.warn('recados:',e.message); _recadosUnsub=null; }
+    );
+  }catch(e){ console.warn('recados:',e.message); }
+}
+function _pararRecados(){
+  try{ if(_recadosUnsub) _recadosUnsub(); }catch(_){}
+  _recadosUnsub=null; _recadosMeus=[]; _recadosVistos=new Set(); _recadosEnv=[];
+  _renderRecadosTopo();
+  _encsNovos=[]; _encsAvisoPronto=false; _renderEncsNovos();
+}
+// X da caixa vermelha: some na hora e fica marcado como lido para o admin.
+window.fecharRecado=async id=>{
+  _recadosMeus=_recadosMeus.filter(r=>r.id!==id);
+  _renderRecadosTopo();
+  try{
+    const {db,doc,updateDoc}=window._FB;
+    await updateDoc(doc(db,'recados',id),{lido:true,lidoEm:new Date().toISOString()});
+  }catch(e){ console.warn('recado (marcar lido):',e.message); }
+};
+
+// ══════════════════════════════════════════════════════════
+//  AVISO DE NOVOS ENCONTRISTAS
+//  Cada aparelho guarda (no próprio navegador, sem gastar leituras) quais
+//  encontristas a pessoa já viu. O que aparecer a mais na lista vira um
+//  aviso no topo: "N novos encontristas foram adicionados" + os nomes.
+//  O X marca todos como vistos. Quem cadastrou não recebe o próprio aviso.
+// ══════════════════════════════════════════════════════════
+let _encsNovos=[];
+function _encsVistosKey(){ return 'vv_encs_vistos_'+(window._FB_CONFIG?.projectId||'')+'_'+(CU?.uid||''); }
+function _lerEncsVistos(){
+  try{ const v=JSON.parse(localStorage.getItem(_encsVistosKey())||'null'); return Array.isArray(v)?new Set(v):null; }
+  catch(_){ return null; }
+}
+function _gravarEncsVistos(set){ try{ localStorage.setItem(_encsVistosKey(),JSON.stringify([...set])); }catch(_){} }
+function _checarEncsNovos(snap){
+  if(!CU?.uid) return;
+  const doCache=!!snap.metadata?.fromCache;
+  const atuais=snap.docs.map(d=>({id:d.id,nome:d.data()?.nome||'Sem nome',local:!!d.metadata?.hasPendingWrites}));
+  let vistos=_lerEncsVistos();
+  if(!vistos){
+    // Primeira vez neste aparelho: o que já existe conta como visto.
+    // Espera a lista vir do servidor para não tomar um cache parcial como base.
+    if(doCache) return;
+    _gravarEncsVistos(new Set(atuais.map(e=>e.id)));
+    _encsNovos=[]; _renderEncsNovos(); return;
+  }
+  const idsAtuais=new Set(atuais.map(e=>e.id));
+  let mudou=false;
+  // cadastrados por este próprio aparelho não geram aviso
+  atuais.forEach(e=>{ if(e.local && !vistos.has(e.id)){ vistos.add(e.id); mudou=true; } });
+  // esquece os que foram excluídos, para a lista guardada não crescer para sempre
+  if(!doCache) [...vistos].forEach(id=>{ if(!idsAtuais.has(id)){ vistos.delete(id); mudou=true; } });
+  if(mudou) _gravarEncsVistos(vistos);
+  const antes=new Set(_encsNovos.map(e=>e.id));
+  _encsNovos=atuais.filter(e=>!vistos.has(e.id))
+    .sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR',{sensitivity:'base'}));
+  const chegaram=_encsNovos.filter(e=>!antes.has(e.id)).length;
+  if(chegaram && _encsAvisoPronto) toast(chegaram===1?'1 novo encontrista foi adicionado':`${chegaram} novos encontristas foram adicionados`,'wrn');
+  _encsAvisoPronto=true;
+  _renderEncsNovos();
+}
+let _encsAvisoPronto=false; // evita o balãozinho no carregamento inicial (a caixa aparece mesmo assim)
+function _renderEncsNovos(){
+  const el=document.getElementById('encs-novos-topo'); if(!el) return;
+  const n=_encsNovos.length;
+  if(!n){ el.innerHTML=''; return; }
+  el.innerHTML=`<div class="recado enc-novos" role="status">
+      <svg class="recado-ico" width="16" height="16"><use href="#ico-users"/></svg>
+      <div class="recado-txt">${n===1?'1 novo encontrista foi adicionado':`${n} novos encontristas foram adicionados`}
+        <div class="enc-novos-lista">${_encsNovos.map(e=>`<span>${esc(e.nome)}</span>`).join('')}</div>
+      </div>
+      <button class="recado-x" onclick="fecharEncsNovos()" aria-label="Fechar aviso" title="Fechar"><svg width="13" height="13"><use href="#ico-x"/></svg></button>
+    </div>`;
+}
+window.fecharEncsNovos=()=>{
+  const vistos=_lerEncsVistos()||new Set();
+  _encsNovos.forEach(e=>vistos.add(e.id));
+  _gravarEncsVistos(vistos);
+  _encsNovos=[]; _renderEncsNovos();
+};
+
+// ── Admin: escrever ──
+function _recadoServos(){
+  return _usrsCache.filter(u=>u.perfil!=='admin')
+    .sort((a,b)=>String(a.nome||a.email||'').localeCompare(String(b.nome||b.email||''),'pt-BR',{sensitivity:'base'}));
+}
+window._recadoConta=()=>{
+  const t=document.getElementById('recado-msg')?.value||'';
+  const n=document.getElementById('recado-n'); if(n) n.textContent=t.length;
+  const b=document.getElementById('recado-enviar');
+  if(b) b.disabled=!(t.trim() && document.getElementById('recado-para')?.value);
+};
+window.abrirRecado=async()=>{
+  if(CU?.perfil!=='admin'){ toast('Ação restrita ao administrador','err'); return; }
+  if(!_usrsCache.length){
+    try{
+      const snap=await window._FB.getDocs(window._FB.collection(window._FB.db,'users'));
+      _usrsCache=snap.docs.map(d=>({uid:d.id,...d.data()}));
+    }catch(e){ toast('Erro ao carregar os servos','err'); return; }
+  }
+  const servos=_recadoServos();
+  if(!servos.length){ toast('Nenhum servo cadastrado para receber recado','wrn'); return; }
+  const sel=document.getElementById('recado-para');
+  sel.innerHTML=`<option value="">Escolha o servo…</option>
+    <option value="__todos__">Todos os servos (${servos.length})</option>`
+    +servos.map(u=>`<option value="${esc(u.uid)}">${esc(u.nome||u.email||'Sem nome')}</option>`).join('');
+  document.getElementById('recado-msg').value='';
+  _recadoConta();
+  openM('m-recado');
+};
+window.enviarRecado=async()=>{
+  if(CU?.perfil!=='admin'){ toast('Ação restrita ao administrador','err'); return; }
+  const para=document.getElementById('recado-para').value;
+  const texto=(document.getElementById('recado-msg').value||'').trim().slice(0,_RECADO_MAX);
+  if(!para||!texto) return;
+  const servos=_recadoServos();
+  const todos=para==='__todos__';
+  const dest=todos?servos:servos.filter(u=>u.uid===para);
+  if(!dest.length){ toast('Servo não encontrado','err'); return; }
+  const btn=document.getElementById('recado-enviar');
+  btn.disabled=true; btn.textContent='Enviando...';
+  const {db,collection,addDoc}=window._FB;
+  const agora=new Date().toISOString();
+  // "lote" junta os documentos de um mesmo envio para "Todos os servos"
+  const lote=Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+  try{
+    await Promise.all(dest.map(u=>addDoc(collection(db,'recados'),{
+      paraUid:u.uid, paraNome:u.nome||u.email||'', deUid:CU.uid, deNome:CU.nome||CU.email||'Administrador',
+      texto, criadoEm:agora, lido:false, lote, paraTodos:todos
+    })));
+    closeM('m-recado');
+    toast(todos?`Recado enviado para ${dest.length} servo${dest.length!==1?'s':''}!`:`Recado enviado para ${dest[0].nome||dest[0].email}!`,'ok');
+    renderRecadosEnviados();
+  }catch(e){
+    console.error('Erro ao enviar recado:',e);
+    toast(/permission/i.test(e.message||'')?'Recado não enviado: falta publicar a regra "recados" no Firestore':'Erro ao enviar o recado','err');
+  }
+  btn.textContent='Enviar'; _recadoConta();
+};
+
+// ── Admin: lista do que foi enviado, com situação de leitura ──
+async function renderRecadosEnviados(){
+  const wrap=document.getElementById('recados-enviados');
+  if(!wrap||CU?.perfil!=='admin') return;
+  try{
+    const snap=await window._FB.getDocs(window._FB.collection(window._FB.db,'recados'));
+    _recadosEnv=snap.docs.map(d=>({id:d.id,...d.data()}));
+  }catch(e){
+    wrap.innerHTML=`<div style="font-size:.78rem;color:var(--light);">${/permission/i.test(e.message||'')?'Falta publicar a regra "recados" no Firestore.':'Não foi possível carregar os recados.'}</div>`;
+    return;
+  }
+  const lotes={};
+  _recadosEnv.forEach(r=>{ const k=r.lote||r.id; (lotes[k]=lotes[k]||[]).push(r); });
+  const lista=Object.entries(lotes).sort((a,b)=>String(b[1][0].criadoEm||'').localeCompare(String(a[1][0].criadoEm||'')));
+  if(!lista.length){ wrap.innerHTML='<div style="font-size:.78rem;color:var(--light);">Nenhum recado enviado.</div>'; return; }
+  wrap.innerHTML=lista.map(([k,rs])=>{
+    const r=rs[0], lidos=rs.filter(x=>x.lido).length, tudo=lidos===rs.length;
+    const para=r.paraTodos?'Todos os servos':(r.paraNome||'Servo');
+    const chip=rs.length>1?`Lido por ${lidos} de ${rs.length}`:(tudo?'Lido':'Não lido');
+    return `<div class="recado-env">
+      <div class="recado-env-t"><b>Para ${esc(para)}</b> · ${esc(_recadoData(r.criadoEm))}<span title="${esc(r.texto||'')}">${esc(r.texto||'')}</span></div>
+      <span class="recado-chip ${tudo?'lido':'nao'}">${chip}</span>
+      <button onclick="apagarRecado('${esc(k)}')">Apagar</button>
+    </div>`;
+  }).join('');
+}
+window.renderRecadosEnviados=renderRecadosEnviados;
+// Apagar tira o recado também da tela de quem ainda não tinha fechado.
+window.apagarRecado=async lote=>{
+  if(CU?.perfil!=='admin') return;
+  const alvos=_recadosEnv.filter(r=>(r.lote||r.id)===lote);
+  try{
+    const {db,doc,deleteDoc}=window._FB;
+    await Promise.all(alvos.map(r=>deleteDoc(doc(db,'recados',r.id))));
+    toast('Recado apagado.','ok');
+  }catch(e){ toast('Erro ao apagar o recado','err'); }
+  renderRecadosEnviados();
+};
+
 // onAuthStateChanged (defined in initFirebase) handles session restore automatically
 // This function is called after auth state is confirmed
 function _initAfterAuth(){
   if(!CU) return;
   window._setupListeners();
+  _ouvirRecados();
   // Admin e servo entram pelo painel, na aba Homenagens. O servo vai ao
   // editor pelo menu quando quiser editar.
   showAdmin();
@@ -5177,6 +5450,8 @@ async function renderUsrs(){
   try{
     const snap=await window._FB.getDocs(window._FB.collection(window._FB.db,'users'));
     const list=snap.docs.map(d=>({uid:d.id,...d.data()}));
+    _usrsCache=list;
+    renderRecadosEnviados();
 
     function cardHTML(u){
       const cartasDele=cartasData.filter(c=>c.servoUid===u.uid);
@@ -5264,9 +5539,9 @@ window.criarUsr=async()=>{
     // App secundário — não interfere na sessão do admin
     const secondaryAppName='secondary-'+Date.now();
     const secondaryApp=initializeApp(window._FB_CONFIG||{
-      apiKey:'AIzaSyDkxmZc1Ir-rWSmQtKH14NihSzgzJAlzc8',
-      authDomain:'vidavitoriosa01.firebaseapp.com',
-      projectId:'vidavitoriosa01',
+      apiKey:'AIzaSyAmZNgdm29DPTUG-yRZH6QOp8bjWTX7suA',
+      authDomain:'vida-vitoriosa-8b30e.firebaseapp.com',
+      projectId:'vida-vitoriosa-8b30e',
     }, secondaryAppName);
     const secondaryAuth=getAuth(secondaryApp);
 
@@ -5407,7 +5682,7 @@ window.delUsr=async uid=>{
   btns.forEach(b=>{b.disabled=true;b.textContent='...'});
   try{
     const token=await window._FB.auth.currentUser?.getIdToken();
-    const resp=await fetch('https://us-central1-vidavitoriosa01.cloudfunctions.net/deleteUser',{
+    const resp=await fetch('https://us-central1-vida-vitoriosa-8b30e.cloudfunctions.net/deleteUser',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
       body:JSON.stringify({uid}),

@@ -2574,12 +2574,12 @@ tbody tr:hover{background:rgba(255,255,255,.45)}
 //  FIREBASE CONFIG
 // ══════════════════════════════════════════════════════════
 const FB_CONFIG = {
-  apiKey:            "AIzaSyAmZNgdm29DPTUG-yRZH6QOp8bjWTX7suA",
-  authDomain:        "vida-vitoriosa-8b30e.firebaseapp.com",
-  projectId:         "vida-vitoriosa-8b30e",
-  storageBucket:     "vida-vitoriosa-8b30e.firebasestorage.app",
-  messagingSenderId: "458973176639",
-  appId:             "1:458973176639:web:519ae9535cfc5ef137698a"
+  apiKey:            "AIzaSyDkxmZc1Ir-rWSmQtKH14NihSzgzJAlzc8",
+  authDomain:        "vidavitoriosa01.firebaseapp.com",
+  projectId:         "vidavitoriosa01",
+  storageBucket:     "vidavitoriosa01.firebasestorage.app",
+  messagingSenderId: "266666618044",
+  appId:             "1:266666618044:web:d230c8c19839ceb1bf34b9"
 };
 
 // ══════════════════════════════════════════════════════════
@@ -2610,11 +2610,14 @@ function onFbReady(fn){ _fbReady ? fn() : _fbResolvers.push(fn); }
     // Precisa vir antes de getAuth/getFirestore/getStorage.
     // Se falhar, o site segue funcionando (enquanto a exigência
     // não estiver ativada no console do Firebase).
-    try{
+    // Chave do site (Fraud Defense / reCAPTCHA) do projeto vidavitoriosa01.
+    // Enquanto estiver vazia, o App Check fica desligado e o site funciona normalmente.
+    const APPCHECK_KEY = '';
+    if(APPCHECK_KEY) try{
       const { initializeAppCheck, ReCaptchaEnterpriseProvider }
                              = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-check.js');
       initializeAppCheck(app, {
-        provider: new ReCaptchaEnterpriseProvider('6LfaVtstAAAAAAVpD_E3aoQRr5lTrdETCafdfaRq'),
+        provider: new ReCaptchaEnterpriseProvider(APPCHECK_KEY),
         isTokenAutoRefreshEnabled: true
       });
       console.log('%c✦ App Check ativado','color:#4e9e6e;font-weight:bold');
@@ -5539,9 +5542,9 @@ window.criarUsr=async()=>{
     // App secundário — não interfere na sessão do admin
     const secondaryAppName='secondary-'+Date.now();
     const secondaryApp=initializeApp(window._FB_CONFIG||{
-      apiKey:'AIzaSyAmZNgdm29DPTUG-yRZH6QOp8bjWTX7suA',
-      authDomain:'vida-vitoriosa-8b30e.firebaseapp.com',
-      projectId:'vida-vitoriosa-8b30e',
+      apiKey:'AIzaSyDkxmZc1Ir-rWSmQtKH14NihSzgzJAlzc8',
+      authDomain:'vidavitoriosa01.firebaseapp.com',
+      projectId:'vidavitoriosa01',
     }, secondaryAppName);
     const secondaryAuth=getAuth(secondaryApp);
 
@@ -5682,7 +5685,7 @@ window.delUsr=async uid=>{
   btns.forEach(b=>{b.disabled=true;b.textContent='...'});
   try{
     const token=await window._FB.auth.currentUser?.getIdToken();
-    const resp=await fetch('https://us-central1-vida-vitoriosa-8b30e.cloudfunctions.net/deleteUser',{
+    const resp=await fetch('https://us-central1-vidavitoriosa01.cloudfunctions.net/deleteUser',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
       body:JSON.stringify({uid}),

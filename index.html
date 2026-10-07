@@ -2383,7 +2383,7 @@ tbody tr:hover{background:rgba(255,255,255,.45)}
       <input type="hidden" id="encm-id">
       <div class="encx-sec-t">Encontrista</div>
       <div class="encx-fgrid">
-        <label class="fl" style="grid-column:1/-1">Nome completo<input class="fi" id="encm-nome" maxlength="80"><span id="encm-nome-aviso" class="encx-hint hidden">O nome não pode ser alterado aqui, porque as cartas estão ligadas a ele.</span></label>
+        <label class="fl" style="grid-column:1/-1">Nome completo<input class="fi" id="encm-nome" maxlength="80"><span id="encm-nome-aviso" class="encx-hint hidden">Se corrigir o nome, as cartas e as páginas do editor deste encontrista passam para o nome novo.</span></label>
         <label class="fl">Telefone (WhatsApp)<input class="fi" id="encm-tel" type="tel"></label>
         <label class="fl">Idade<input class="fi" id="encm-idade" type="number" min="0" max="120"></label>
         <label class="fl">Sexo<select class="fi" id="encm-sexo"><option value="">—</option><option value="F">Feminino</option><option value="M">Masculino</option></select></label>
@@ -5007,7 +5007,7 @@ window.encAbrirModal=id=>{
   set('idade',d.idade||''); set('sexo',d.sexo||''); set('rede',d.rede||''); set('batizado',d.batizado||'');
   set('celula',d.celula||''); set('lider',d.lider||''); set('lidertel',_fmtTel(d.liderTel)||'');
   [1,2,3].forEach(n=>{const c=(d.contatos||[])[n-1]||{}; set(`c${n}-nome`,c.nome&&c.nome!=='(sem nome)'?c.nome:''); set(`c${n}-tel`,_fmtTel(c.tel)||''); set(`c${n}-grau`,c.grau||'');});
-  document.getElementById('encm-nome').readOnly=!!id;
+  document.getElementById('encm-nome').readOnly=false;
   document.getElementById('encm-nome-aviso').classList.toggle('hidden',!id);
   document.getElementById('encm-titulo').textContent=id?'Editar encontrista':'Novo encontrista';
   openM('m-encx');
@@ -5027,7 +5027,21 @@ window.encSalvarModal=async()=>{
       id=await DB.add('encontristas',{nome});
       if(!id){toast('Erro ao adicionar','err');return;}
     } else {
-      nome=encsData.find(x=>x.id===id)?.nome||g('nome');
+      const atual=encsData.find(x=>x.id===id)?.nome||'';
+      nome=atual||g('nome');
+      // Correção de nome: leva junto as cartas, as páginas do editor e o
+      // controle de impressão, que são todos ligados ao nome.
+      const digitado=g('nome')===atual?atual:_titleNome(g('nome'));
+      if(atual && digitado!==atual){
+        if(digitado.length<2){toast('Informe o nome','wrn');return;}
+        if(encsData.some(e=>e.id!==id && _normNome(e.nome)===_normNome(digitado))){toast('Já existe outro encontrista com esse nome','err');return;}
+        const nC=cartasData.filter(c=>c.para===atual).length;
+        if(!confirm(`Corrigir o nome de "${atual}" para "${digitado}"?\n\n${nC} carta${nC!==1?'s':''} e as páginas do editor passam para o nome novo.`)) return;
+        btn.textContent='Renomeando...';
+        const r=await _renomearEncontrista(id,atual,digitado);
+        nome=digitado;
+        toast(`Nome corrigido: ${r.cartas} carta${r.cartas!==1?'s':''} transferida${r.cartas!==1?'s':''}.`,'ok');
+      }
     }
     const antigo=_encDados[id];
     const contatos=[1,2,3].map(n=>{
@@ -5056,8 +5070,92 @@ window.encSalvarModal=async()=>{
     toast('Encontrista salvo','ok');
   }catch(e){
     toast(/permission/i.test(e.message||'')?'Sem permissão: libere encontristas_dados nas regras do Firestore':'Erro: '+e.message,'err');
-  }finally{ btn.disabled=false; }
+  }finally{ btn.disabled=false; btn.textContent='Salvar'; }
 };
+
+// Troca o nome de um encontrista em tudo o que é guardado pelo nome:
+// cartas (campo "para"), linha "Para: ..." das páginas, índice do editor,
+// controle de impressão e sexo. O cadastro em si é trocado por último:
+// se algo falhar no meio, o nome antigo continua valendo e basta repetir.
+async function _renomearEncontrista(id, antigo, novo){
+  const F=window._FB, db=F.db;
+  const chave=n=>'enc_'+String(n).replace(/\W/g,'_');
+  const kOld=chave(antigo), kNew=chave(novo);
+  const agora=()=>new Date().toISOString();
+
+  // 1) Cartas — busca no servidor para incluir as que estão na lixeira
+  const snap=await F.getDocs(F.query(F.collection(db,'cartas'),F.where('para','==',antigo)));
+  const ids=snap.docs.map(d=>d.id);
+  for(const cid of ids){
+    await F.updateDoc(F.doc(db,'cartas',cid),{para:novo,atualizadoEm:F.serverTimestamp()});
+  }
+
+  // 2) Páginas já montadas: corrige a linha "Para: nome" (só se estiver intacta)
+  let paginas=0;
+  for(const cid of ids){
+    try{
+      const ps=await F.getDoc(F.doc(db,'editor_paginas',cid));
+      if(!ps.exists()) continue;
+      const data=ps.data(); let mudou=false;
+      (data.page?.elements||[]).forEach(el=>{
+        if(el.type==='text' && typeof el.content==='string' && el.content.trim()==='Para: '+antigo){ el.content='Para: '+novo; mudou=true; }
+      });
+      if(mudou){ await F.setDoc(F.doc(db,'editor_paginas',cid),{...data,updatedAt:agora()}); paginas++; }
+    }catch(e){ console.warn('renomear (página '+cid+'):',e.message); }
+  }
+
+  // 3) Índice do editor (lista de cartas do encontrista) muda de chave
+  if(kOld!==kNew){
+    const [o,n]=await Promise.all([F.getDoc(F.doc(db,'editor_index',kOld)),F.getDoc(F.doc(db,'editor_index',kNew))]);
+    if(o.exists()){
+      const juntos=[...new Set([...(n.exists()?(n.data().cartaIds||[]):[]),...(o.data().cartaIds||[])])];
+      await F.setDoc(F.doc(db,'editor_index',kNew),{...o.data(),cartaIds:juntos,updatedAt:agora()});
+      await F.deleteDoc(F.doc(db,'editor_index',kOld));
+      if(window._idxCache){ window._idxCache[kNew]=juntos; delete window._idxCache[kOld]; }
+    }
+    // formato antigo do editor (1 documento por encontrista), se ainda existir
+    try{
+      const leg=await F.getDoc(F.doc(db,'editor',kOld));
+      if(leg.exists()){
+        await F.setDoc(F.doc(db,'editor',kNew),leg.data());
+        const tb=leg.data().totalBlocos||1;
+        for(let i=1;i<tb;i++){
+          const b=await F.getDoc(F.doc(db,'editor',`${kOld}_${i+1}`));
+          if(b.exists()) await F.setDoc(F.doc(db,'editor',`${kNew}_${i+1}`),b.data());
+        }
+      }
+    }catch(e){ console.warn('renomear (editor antigo):',e.message); }
+  }
+
+  // 4) Controle de impressão e sexo
+  try{
+    const imp=await F.getDoc(F.doc(db,'editor','impressoes'));
+    const lista=imp.exists()?imp.data()[antigo]:null;
+    if(Array.isArray(lista)){
+      await F.setDoc(F.doc(db,'editor','impressoes'),{[novo]:lista,[antigo]:F.deleteField()},{merge:true});
+      _impressoes[novo]=lista; delete _impressoes[antigo];
+    }
+  }catch(e){ console.warn('renomear (impressões):',e.message); }
+  try{
+    await _carregarGeneros();
+    for(const [docId,mapa] of [['generos',_generosEnc],['generos_planilha',_generosPlanilha]]){
+      if(mapa[antigo]){
+        await F.setDoc(F.doc(db,'editor',docId),{[novo]:mapa[antigo],[antigo]:null},{merge:true});
+        mapa[novo]=mapa[antigo]; mapa[antigo]=null;
+      }
+    }
+  }catch(e){ console.warn('renomear (sexo):',e.message); }
+
+  // 5) Por último, o cadastro (a lista pública do formulário se atualiza sozinha)
+  await F.updateDoc(F.doc(db,'encontristas',id),{nome:novo});
+
+  // 6) Tela deste aparelho — os outros recebem pela sincronização normal
+  cartasData.forEach(c=>{ if(c.para===antigo) c.para=novo; });
+  const e=encsData.find(x=>x.id===id); if(e) e.nome=novo;
+  if(currentEncDoc===antigo) currentEncDoc=novo;
+  window.filtrarAtivas?.(); window.filtrarProntas?.();
+  return {cartas:ids.length,paginas};
+}
 
 // ── Exportar lista de encontristas ──
 window.exportarEncontristas=()=>{

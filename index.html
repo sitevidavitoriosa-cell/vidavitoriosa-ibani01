@@ -4835,10 +4835,24 @@ function _parseContato(txt){
   return {nome, tel, grau:(nome===grau?'':grau), raw, enviado:false};
 }
 
+// "Mensagem enviada": a marcação atual fica em d.enviados[i] (admin e a
+// serva responsável marcam ali, sem tocar nos contatos); c.enviado é o
+// valor antigo / vindo da importação.
+function _envOk(d,i){
+  const m=d?.enviados;
+  if(m && m[i]!==undefined && m[i]!==null) return !!m[i];
+  return !!d?.contatos?.[i]?.enviado;
+}
+// Carta deste encontrista assumida pela serva logada (ou null)
+function _minhaCartaDoEnc(nomeEnc){
+  if(CU?.perfil!=='servo') return null;
+  const k=_normNome(nomeEnc);
+  return cartasData.find(c=>c.servoUid===CU.uid && _normNome(c.para)===k)||null;
+}
 function renderAdminEncs(){
   const _ehAdmin=CU?.perfil==='admin';
   encsData=[...encsData].sort((a,b)=>String(a.nome||'').localeCompare(String(b.nome||''),'pt-BR',{sensitivity:'base'}));
-  const totalAvisados=encsData.filter(e=>{const c=_encDados[e.id]?.contatos||[];return c.length&&c.every(x=>x.enviado);}).length;
+  const totalAvisados=encsData.filter(e=>{const d=_encDados[e.id];const c=d?.contatos||[];return c.length&&c.every((x,i)=>_envOk(d,i));}).length;
   const cnt=document.getElementById('enc-count');
   if(cnt) cnt.innerHTML=`<b>${encsData.length}</b> encontrista${encsData.length!==1?'s':''} · ${totalAvisados} com todos os contatos avisados`;
   const wrap=document.getElementById('enc-list-wrap');
@@ -4861,7 +4875,8 @@ function renderAdminEncs(){
     const ini=String(e.nome).split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
     const nCartas=cartasData.filter(c=>c.para===e.nome).length;
     const cts=d?.contatos||[];
-    const env=cts.filter(c=>c.enviado).length;
+    const env=cts.filter((c,i)=>_envOk(d,i)).length;
+    const podeMarcar=_ehAdmin||!!_minhaCartaDoEnc(e.nome);
     const chips=[
       d?.sexo?`<span class="encx-chip ${sx}">${d.sexo}</span>`:'',
       d?.idade?`<span class="encx-chip">${esc(d.idade)} anos</span>`:'',
@@ -4889,9 +4904,9 @@ function renderAdminEncs(){
                 <div class="encx-ct-nome">${esc(c.nome)}${c.grau?`<span class="encx-chip cartas">${esc(c.grau)}</span>`:''}</div>
                 ${h?`<span class="encx-ct-tel">${_fmtTel(c.tel)}</span>`:`<span class="encx-ct-raw">Contato não identificado — informe o número manualmente</span>${c.raw?`<span class="encx-hint">Escrito na inscrição: “${esc(c.raw)}”</span>`:''}`}
               </div>
-              ${_ehAdmin
-                ?`<label class="encx-env"><input type="checkbox" ${c.enviado?'checked':''} onchange="encMarcarEnviado('${e.id}',${i},this.checked)"> Mensagem enviada</label>`
-                :`<label class="encx-env ro"><input type="checkbox" ${c.enviado?'checked':''} disabled> Mensagem enviada</label>`}
+              ${podeMarcar
+                ?`<label class="encx-env"><input type="checkbox" ${_envOk(d,i)?'checked':''} onchange="encMarcarEnviado('${e.id}',${i},this.checked)"> Mensagem enviada</label>`
+                :`<label class="encx-env ro" title="Só a serva que assumiu este encontrista pode marcar"><input type="checkbox" ${_envOk(d,i)?'checked':''} disabled> Mensagem enviada</label>`}
               ${h?`<a class="encx-wa lg" href="${h}" target="_blank" rel="noopener">${waIco} WhatsApp</a>`:(_ehAdmin?`<button class="btn btn-nm btn-sm" onclick="encAbrirModal('${e.id}')">Informar número</button>`:'')}
             </div>`;}).join(''):'<div class="encx-hint">Nenhum contato informado.</div>'}
           </div>
@@ -4918,15 +4933,33 @@ function renderAdminEncs(){
 }
 window.encToggle=id=>{ _encAberto=_encAberto===id?null:id; renderAdminEncs(); };
 
+// Admin marca em qualquer encontrista; a serva, só nos que ela assumiu.
 window.encMarcarEnviado=async(id,i,val)=>{
-  if(CU?.perfil!=='admin'){toast('Ação restrita ao administrador','err');return;}
-  const d=_encDados[id]; if(!d||!d.contatos?.[i]) return;
-  d.contatos[i].enviado=!!val;
+  const d=_encDados[id], e=encsData.find(x=>x.id===id);
+  if(!d||!d.contatos?.[i]||!e) return;
+  const ehAdmin=CU?.perfil==='admin';
+  const minha=ehAdmin?null:_minhaCartaDoEnc(e.nome);
+  if(!ehAdmin && !minha){ toast('Só a serva que assumiu este encontrista pode marcar','err'); renderAdminEncs(); return; }
+  const antes=d.enviados?.[i];
+  d.enviados={...(d.enviados||{}),[i]:!!val};
   renderAdminEncs();
   try{
     const {doc,updateDoc}=window._FB;
-    await updateDoc(doc(window._FB.db,'encontristas_dados',id),{contatos:d.contatos});
-  }catch(e){ toast('Erro ao salvar: '+e.message,'err'); }
+    if(!ehAdmin){
+      // A regra confere a serva pela carta registrada em acessoServos:
+      // registra (ou atualiza) antes, se ainda não estiver valendo.
+      const atual=(d.acessoServos||{})[CU.uid];
+      if(!atual || !cartasData.some(c=>c.id===atual && c.servoUid===CU.uid)){
+        await _garantirAcessoServo(e.nome, minha.id);
+        d.acessoServos={...(d.acessoServos||{}),[CU.uid]:minha.id};
+      }
+    }
+    await updateDoc(doc(window._FB.db,'encontristas_dados',id),{['enviados.'+i]:!!val});
+  }catch(err){
+    if(antes===undefined) delete d.enviados[i]; else d.enviados[i]=antes;
+    renderAdminEncs();
+    toast(/permission/i.test(err.message||'')?'Sem permissão: falta publicar a regra nova do Firestore':'Erro ao salvar: '+err.message,'err');
+  }
 };
 
 // ── Importação da planilha (.xlsx / .csv) ──
@@ -5023,7 +5056,7 @@ window.encConfirmarImport=async()=>{
         enc={id,nome:r.nome}; porChave.set(k,enc); novos++;
       }
       const antigo=_encDados[id];
-      const contatos=r.contatos.map((c,i)=>{const a=antigo?.contatos?.[i];return {...c,enviado:!!(a&&a.enviado&&(a.tel===c.tel||a.raw===c.raw))};});
+      const contatos=r.contatos.map((c,i)=>{const a=antigo?.contatos?.[i];return {...c,enviado:!!(a&&_envOk(antigo,i)&&(a.tel===c.tel||a.raw===c.raw))};});
       const dados={...r,nome:enc.nome,contatos,origem:'planilha',atualizadoEm:new Date().toISOString(),acessoServos:antigo?.acessoServos||{}};
       await setDoc(doc(window._FB.db,'encontristas_dados',id),dados);
       _encDados[id]=dados;
@@ -5092,7 +5125,7 @@ window.encSalvarModal=async()=>{
       const nm=g(`c${n}-nome`), tel=_telDigits(g(`c${n}-tel`)), grau=g(`c${n}-grau`);
       if(!nm&&!tel) return null;
       const a=antigo?.contatos?.[n-1];
-      return {nome:_titleNome(nm)||'(sem nome)',tel,grau,raw:a?.raw||[nm,g(`c${n}-tel`),grau].filter(Boolean).join(' · '),enviado:!!a?.enviado};
+      return {nome:_titleNome(nm)||'(sem nome)',tel,grau,raw:a?.raw||[nm,g(`c${n}-tel`),grau].filter(Boolean).join(' · '),enviado:a?_envOk(antigo,n-1):false};
     }).filter(Boolean);
     const sx=g('sexo');
     const dados={nome,telefone:_telDigits(g('tel'))||g('tel'),idade:parseInt(g('idade'))||'',sexo:sx,rede:g('rede'),batizado:g('batizado'),

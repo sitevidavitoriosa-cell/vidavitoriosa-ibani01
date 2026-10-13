@@ -6109,14 +6109,19 @@ function _criarPaginaPadrao(c,i,PW,PH){
   const fotoMargem=temFoto?24:0;
   const txtH=PH-txtY-fotoAltura-fotoMargem-80;
 
-  pg.elements.push(mkTxt(c.carta||'', margH, txtY, largura, Math.max(txtH,200),
+  // Vida Vitoriosa Kids: caixa da mensagem com tamanho fixo de 488 × 222,
+  // independente do formato do papel (só encolhe se o papel for menor).
+  const msgW=Math.min(488, PW-margH*2), msgH=Math.min(222, Math.max(PH-txtY-40,60));
+  pg.elements.push(mkTxt(c.carta||'', margH, txtY, msgW, msgH,
     {fs:13, ff:'Arial', fw:'400', lh:1.6, col:'#2e3138', ta:'left'}));
 
   if(temFoto){
-    const fotoW=Math.round(PW*0.55);
-    const fotoH=Math.round(fotoW*0.75);
-    const fotoX=Math.round((PW-fotoW)/2);
-    const fotoY=PH-fotoH-60;
+    // Vida Vitoriosa Kids: foto 250 × 189 em x 285, y 685 (papel vertical).
+    // Se o papel for menor, a foto encolhe e é puxada para dentro dele.
+    const fotoW=Math.min(250, PW-40);
+    const fotoH=Math.min(189, Math.round(fotoW*189/250));
+    const fotoX=Math.max(0, Math.min(285, PW-fotoW-20));
+    const fotoY=Math.max(0, Math.min(685, PH-fotoH-20));
     // Detecta fotos antigas salvas em base64 (de antes da correção do upload)
     // — essas pesam muito e são a causa mais provável de blocos passarem de 1MB
     if(c.foto && c.foto.length>500 && c.foto.startsWith('data:')){

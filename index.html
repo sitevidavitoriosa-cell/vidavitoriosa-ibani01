@@ -1372,6 +1372,11 @@ tbody tr:hover{background:rgba(255,255,255,.45)}
   .mobile-btns{ display:none !important; }
   .mobile-overlay{ display:none !important; }
 }
+
+/* aviso do limite de 1 carta por hora para o mesmo encontrista */
+.vv-limite{margin-top:12px;background:#fcf1de;color:#7a4e0e;border-radius:12px;padding:11px 13px;font-size:.84rem;line-height:1.5;font-weight:600}
+.vv-limite b{font-weight:800}
+:root.dark .vv-limite{background:#3a2c14;color:#f3d9a8}
 </style>
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -1506,9 +1511,10 @@ tbody tr:hover{background:rgba(255,255,255,.45)}
       <div class="form-step hidden" data-step="3">
         <div class="shead"><div class="snum">3 de 6</div><div class="stitle">Para quem é a carta?</div></div>
         <div class="sbody">
-          <select class="fi" id="f-para">
+          <select class="fi" id="f-para" onchange="_vvLimiteLimpar()">
             <option value="">Selecione o encontrista...</option>
           </select>
+          <div id="vv-limite-aviso" class="vv-limite hidden" role="alert"></div>
 
         </div>
         <div class="sfoot">
@@ -3248,6 +3254,7 @@ const DB = {
         const {cartaIds,updatedAt}=idxSnap.data();
         window._editorDocLoadedAt=updatedAt||null;
         if(Array.isArray(cartaIds) && cartaIds.length){
+          const falhas=[];
           const paginas=await Promise.all(
             cartaIds.map(async cid=>{
               try{
@@ -3258,9 +3265,13 @@ const DB = {
                 // imprimirPorEncontrista filtrar só as cartas prontas.
                 if(pg && !pg.cartaId) pg.cartaId=cid;
                 return pg||null;
-              }catch(_){ return null; }
+              }catch(e){ falhas.push(cid); console.warn('Página não carregada',cid,e?.message); return null; }
             })
           );
+          // Se alguma página não pôde ser lida (conexão), NÃO devolve a
+          // lista incompleta: quem chama trataria a carta como "sem página"
+          // e gravaria uma página padrão por cima da que a serva editou.
+          if(falhas.length) return {_erro:true,falhas};
           const validas=paginas.filter(Boolean);
           if(validas.length) return validas;
         }
@@ -3270,7 +3281,7 @@ const DB = {
       return await this._loadEditorDocLegado(nomeEnc);
     }catch(e){
       console.error('loadEditorDoc error:', e.message);
-      return null;
+      return {_erro:true};
     }
   },
 
@@ -3409,8 +3420,58 @@ window.nextStep=n=>{
     6:[['f-carta','Escreva a carta']]
   };
   for(const [id,msg] of(v[n]||[])){const el=document.getElementById(id);if(!el?.value?.trim()){toast(msg,'err');el?.focus();return}}
+  // Ao escolher o encontrista, confere o limite antes da pessoa escrever a carta
+  if(n===4){
+    _vvLimiteVerificar().then(bloq=>{ if(bloq){ _vvLimiteAviso(bloq); return; } _vvLimiteLimpar(); gotoStep(4); });
+    return;
+  }
   gotoStep(n);
 };
+// Uma pessoa (identificada pelo telefone) só pode mandar outra carta para o
+// MESMO encontrista depois de 1 hora. Para outros encontristas, liberado.
+// Fica guardado neste aparelho e também no banco (envios/{código}), para
+// valer mesmo se a pessoa trocar de celular ou limpar o navegador.
+const VV_LIM_MS=60*60*1000;
+function _vvLimLocal(){ try{ return JSON.parse(localStorage.getItem('vv::envios')||'{}'); }catch(_){ return {}; } }
+async function _vvLimChave(){
+  const tel=fv('f-tel').replace(/\D/g,''), para=_normNome(fv('f-para'));
+  if(!tel||!para) return null;
+  const txt='vv|'+tel+'|'+para;
+  try{ const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(txt)); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('').slice(0,40); }
+  catch(_){ return 'l_'+txt; }
+}
+async function _vvLimiteVerificar(){
+  const k=await _vvLimChave(); if(!k) return null;
+  let ult=Number(_vvLimLocal()[k])||0;
+  try{
+    if(window._FB && !k.startsWith('l_')){
+      const {doc,getDoc}=window._FB;
+      const sn=await getDoc(doc(window._FB.db,'envios',k));
+      if(sn.exists()) ult=Math.max(ult,Number(sn.data().t)||0);
+    }
+  }catch(_){ /* sem permissão ou sem conexão: vale o registro deste aparelho */ }
+  if(ult && Date.now()-ult<VV_LIM_MS) return {para:fv('f-para'), libera:ult+VV_LIM_MS};
+  return null;
+}
+async function _vvLimiteRegistrar(){
+  const k=await _vvLimChave(); if(!k) return;
+  const agora=Date.now();
+  try{
+    const m=_vvLimLocal();
+    Object.keys(m).forEach(x=>{ if(agora-m[x]>VV_LIM_MS) delete m[x]; });
+    m[k]=agora; localStorage.setItem('vv::envios',JSON.stringify(m));
+  }catch(_){}
+  try{ if(!k.startsWith('l_')){ const {doc,setDoc}=window._FB; await setDoc(doc(window._FB.db,'envios',k),{t:agora}); } }catch(_){}
+}
+function _vvLimiteAviso(b){
+  const hora=new Date(b.libera).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  const el=document.getElementById('vv-limite-aviso');
+  const msg=`Você já enviou uma carta para <b>${esc(b.para)}</b>. Para manter as cartas organizadas, cada pessoa pode enviar uma carta por encontrista a cada 1 hora — você poderá escrever de novo para ele(a) a partir das <b>${hora}</b>. Enquanto isso, pode escrever para outro encontrista.`;
+  if(el){ el.innerHTML=msg; el.classList.remove('hidden'); }
+  try{ if(typeof _posicionarSocial==='function') setTimeout(_posicionarSocial,30); }catch(_){}
+  toast(`Você poderá escrever de novo para ${b.para} a partir das ${hora}`,'wrn');
+}
+window._vvLimiteLimpar=()=>{ const el=document.getElementById('vv-limite-aviso'); if(!el||el.classList.contains('hidden')) return; el.classList.add('hidden'); try{ if(typeof _posicionarSocial==='function') setTimeout(_posicionarSocial,30); }catch(_){} };
 window.prevStep=n=>gotoStep(n);
 function gotoStep(n){
   document.querySelectorAll('.form-step').forEach(s=>s.classList.add('hidden'));
@@ -3495,6 +3556,9 @@ window.enviarCarta=async()=>{
   try{
     const rl=checkRateLimit();
     if(!rl.ok){toast(rl.msg,'wrn');btn.disabled=false;btn.textContent='Enviar carta';return;}
+    // Confere de novo o limite de 1 hora (ex.: carta enviada em outra aba)
+    const _bloq=await _vvLimiteVerificar();
+    if(_bloq){ btn.disabled=false;btn.textContent='Enviar carta'; gotoStep(3); _vvLimiteAviso(_bloq); return; }
 
     const fEl=document.getElementById('f-foto');
     if(_cfg.fotoObrig && !fEl.files[0]){
@@ -3552,6 +3616,7 @@ window.enviarCarta=async()=>{
       return;
     }
 
+    await _vvLimiteRegistrar();
     if(fotoFalhou){
       toast('Carta enviada! A foto não pôde ser anexada, mas sua mensagem foi registrada.','wrn');
     }
@@ -4270,12 +4335,55 @@ function _autoAssignOrfas(){
   });
 }
 
+// Cartas que chegam (ou são assumidas, ou voltam de "pronta") com o
+// encontrista já aberto no editor ganham a página NA HORA. Antes elas só
+// apareciam na lista da esquerda: clicar nelas não levava a página nenhuma
+// e a serva acabava criando uma página em branco para escrever.
+const _criandoPaginas=new Set();
+async function _garantirPaginasNovasNoEditor(){
+  if(!currentEncDoc || !Array.isArray(pagesData) || !pagesData.length || !window._FB) return;
+  const nome=currentEncDoc;
+  const faltando=_cartasAtivas.filter(c=>c.para===nome && !pagesData.some(pg=>pg.cartaId===c.id) && !_criandoPaginas.has(c.id));
+  if(!faltando.length) return;
+  faltando.forEach(c=>_criandoPaginas.add(c.id));
+  const {doc,getDoc}=window._FB;
+  const PW=window._PRANCH_W||794, PH=window._PRANCH_H||1123;
+  const novas=[]; let criadas=0;
+  try{
+    for(const c of faltando){
+      try{
+        // Se a carta já tem página salva (outro aparelho), usa ela — nunca
+        // grava uma página padrão por cima de uma página existente.
+        const sn=await getDoc(doc(window._FB.db,'editor_paginas',c.id));
+        const salva=sn.exists()?sn.data().page:null;
+        let pg;
+        if(salva && (salva.elements||[]).length){ pg=salva; pg.cartaId=c.id; _ultimoSalvoPorCarta[c.id]=JSON.stringify(pg); }
+        else { pg=_criarPaginaPadrao(c,pagesData.length+novas.length,PW,PH); criadas++; }
+        novas.push(pg);
+      }catch(e){ console.warn('Página da carta nova não carregada',c.id,e.message); }
+    }
+  } finally { faltando.forEach(c=>_criandoPaginas.delete(c.id)); }
+  if(!novas.length || currentEncDoc!==nome) return;
+  // Acrescenta só as páginas novas, sem redesenhar as outras (não atrapalha
+  // quem estiver digitando num texto naquele momento).
+  const inner=document.getElementById('canvas-inner');
+  novas.forEach(pg=>{
+    if(pagesData.some(p=>p.cartaId===pg.cartaId)) return;
+    pagesData.push(pg);
+    if(inner){ const wrap=document.createElement('div'); wrap.className='a4-wrap'; wrap.appendChild(document.createElement('div')); wrap.appendChild(makePage(pg,pagesData.length-1)); inner.appendChild(wrap); }
+  });
+  try{ window._aplicarZoom?.(); }catch(_){}
+  if(criadas) savePages();
+  toast(`${novas.length} carta${novas.length!==1?'s':''} nova${novas.length!==1?'s':''} de ${nome} no editor`,'ok');
+}
+
 function _onCartasUpdate(){
   if(CU) _autoAssignOrfas();
 
   const editorVisible=!document.getElementById('screen-editor').classList.contains('hidden');
   const adminVisible=!document.getElementById('screen-admin').classList.contains('hidden');
   if(editorVisible) renderLeftPanel(document.getElementById('pl-search')?.value||'');
+  if(editorVisible) _garantirPaginasNovasNoEditor().catch(e=>console.warn('páginas novas:',e.message));
   if(adminVisible){
     const activeTab=document.querySelector('.admin-tab.act');
     if(activeTab?.id==='at-cartas') renderAdminCartas();
@@ -5410,6 +5518,8 @@ window.encImportarArquivo=async inp=>{
     const ix={
       nome:col(h=>h==='nome'),
       cancel:col(h=>h.startsWith('cancelada')),
+      categoria:col(h=>h==='categoria'),
+      cupom:col(h=>h==='cupom'),
       rede:col(h=>h.includes('rede')),
       batizado:col(h=>h.includes('batizado')),
       tel:col(h=>h.includes('telefone de contato')||(h.includes('telefone')&&h.includes('whatsapp')&&!h.includes('lider'))),
@@ -5422,12 +5532,21 @@ window.encImportarArquivo=async inp=>{
     H.forEach((h,i)=>{const m=h.match(/^\s*([123])\s*-/); if(m&&hn[i].includes('nao estara')) ctIx[m[1]]=i;});
     if(ix.nome<0){toast('Não encontrei a coluna "Nome" na planilha','err');return;}
     const val=(r,i)=>i>=0?String(r[i]??'').trim():'';
-    let canceladas=0;
+    let canceladas=0, equipe=0;
+    const equipeJaNaLista=[];
+    const _jaTem=new Set(encsData.map(e=>_normNome(e.nome)));
     const registros=[];
+    const vistos=new Set();
     linhas.slice(1).forEach(r=>{
       const nome=_titleNome(val(r,ix.nome));
       if(!nome||nome.length<2) return;
       if(/^sim/i.test(val(r,ix.cancel))){canceladas++;return;}
+      // Equipe (categoria "Equipe" ou cupom de equipe) não entra como encontrista
+      if(_normNome(val(r,ix.categoria)).startsWith('equipe') || /equipe/i.test(val(r,ix.cupom))){
+        equipe++; if(_jaTem.has(_normNome(nome))) equipeJaNaLista.push(nome); return;
+      }
+      // mesma pessoa duas vezes na planilha: fica só a primeira
+      if(vistos.has(_normNome(nome))) return; vistos.add(_normNome(nome));
       const sexoTxt=_normNome(val(r,ix.sexo));
       const lider=_parseContato(val(r,ix.lider));
       const contatos=['1','2','3'].map(k=>ctIx[k]!=null?_parseContato(val(r,ctIx[k])):null).filter(Boolean);
@@ -5452,7 +5571,8 @@ window.encImportarArquivo=async inp=>{
     _encImportPrev={registros,arquivo:f.name};
     const box=document.getElementById('encx-import');
     box.innerHTML=`<div style="flex:1;min-width:220px;"><div class="t">${esc(f.name)}</div>
-      <div class="s">${registros.length} inscrições · ${novos} novos · ${registros.length-novos} já cadastrados (dados atualizados) · ${semNum} contato${semNum!==1?'s':''} não identificado${semNum!==1?'s':''}${canceladas?` · ${canceladas} cancelada${canceladas!==1?'s':''} ignorada${canceladas!==1?'s':''}`:''}</div></div>
+      <div class="s">${registros.length} inscrições · ${novos} novos · ${registros.length-novos} já cadastrados (dados atualizados) · ${semNum} contato${semNum!==1?'s':''} não identificado${semNum!==1?'s':''}${canceladas?` · ${canceladas} cancelada${canceladas!==1?'s':''} ignorada${canceladas!==1?'s':''}`:''}${equipe?` · ${equipe} da equipe ignorado${equipe!==1?'s':''}`:''}</div>
+      ${equipeJaNaLista.length?`<div class="s" style="color:var(--err);margin-top:4px;">Já estão na lista mas são da equipe (exclua se não forem encontristas): ${equipeJaNaLista.map(esc).join(', ')}</div>`:''}</div>
       <div style="display:flex;gap:8px;">
         <button class="btn btn-nm btn-sm" onclick="encCancelarImport()">Cancelar</button>
         <button class="btn btn-accent btn-sm" id="encx-imp-btn" onclick="encConfirmarImport()">Importar ${registros.length}</button>
@@ -6707,7 +6827,13 @@ async function loadEncDocument(nomeEnc){
   }
 
   let saved=null;
-  try{saved=await DB.loadEditorDoc(nomeEnc)}catch(_e){saved=null}
+  try{saved=await DB.loadEditorDoc(nomeEnc)}catch(_e){saved={_erro:true}}
+  if(saved && saved._erro){
+    // Conexão falhou ao ler as páginas: não abre (e não grava nada), para
+    // não substituir páginas editadas por páginas padrão.
+    toast(`Não consegui carregar as páginas de ${nomeEnc} (conexão instável). Nada foi alterado — tente abrir de novo.`,'err');
+    return;
+  }
 
   if(saved && Array.isArray(saved) && saved.length>0){
     // Carrega o documento salvo mas exibe NO EDITOR só as páginas
@@ -7135,6 +7261,10 @@ window.selCarta=id=>{
   document.getElementById('ci-'+id)?.classList.add('sel');
   const idx=pagesData.findIndex(pg=>pg.cartaId===id);
   if(idx>=0) setCurPage(idx);
+  else _garantirPaginasNovasNoEditor().then(()=>{
+    const j=pagesData.findIndex(pg=>pg.cartaId===id);
+    if(j>=0){ setCurPage(j); document.getElementById('pg-'+pagesData[j].id)?.scrollIntoView({behavior:'smooth',block:'center'}); }
+  });
 };
 
 
@@ -8044,6 +8174,7 @@ window.setGeneroEnc=async g=>{
   // cartas prontas são atualizadas direto no banco.
   let salvas=[];
   try{ salvas=await DB.loadEditorDoc(nome)||[]; }catch(_){ salvas=[]; }
+  if(!Array.isArray(salvas)) salvas=[];
   const chave=pg=>pg.cartaId||pg.id;
   const ordem=salvas.map(chave);
   pagesData.forEach(pg=>{ if(!ordem.includes(chave(pg))) ordem.push(chave(pg)); });
@@ -8340,7 +8471,11 @@ window.imprimirPorEncontrista=async(nomeEnc)=>{
 
     // 1) Páginas pelo índice do editor (define a ordem do caderno)
     let doIndice=[];
-    try{ doIndice=(await DB.loadEditorDoc(nomeEnc))||[]; }catch(_){ doIndice=[]; }
+    try{ doIndice=(await DB.loadEditorDoc(nomeEnc))||[]; }catch(_){ doIndice={_erro:true}; }
+    if(!Array.isArray(doIndice)){
+      toast(`Não consegui carregar as páginas de ${nomeEnc} (conexão instável). Tente imprimir de novo.`,'err');
+      return;
+    }
     const porId=new Map();
     doIndice.forEach(pg=>{
       if(pg && pg.cartaId && idsProntas.has(pg.cartaId) && !porId.has(pg.cartaId)) porId.set(pg.cartaId,pg);

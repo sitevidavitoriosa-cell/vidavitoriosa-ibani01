@@ -423,6 +423,10 @@ select.fi{cursor:pointer}
 .recado-chip.nao{background:rgba(196,136,58,.15);color:var(--warn);}
 .recado-env button{border:none;background:none;color:var(--light);cursor:pointer;font-size:.72rem;font-weight:700;font-family:inherit;}
 .recado-env button:hover{color:var(--err);}
+/* Responsável pelo encontrista */
+.encx-resp{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.encx-resp-t{flex:1;min-width:180px;font-size:.8rem;line-height:1.45;text-align:left;}
+.encx-resp-b{display:flex;gap:8px;flex-wrap:wrap;}
 /* Aviso de novos encontristas: mesma caixa do recado, em outra cor */
 #encs-novos-topo{padding:10px 22px 0;}
 #encs-novos-topo:empty{display:none;}
@@ -2122,7 +2126,7 @@ tbody tr:hover{background:rgba(255,255,255,.45)}
             <button class="btn btn-nm btn-sm" id="encx-btn-sel" onclick="encSelIniciar()" title="Selecionar vários para excluir">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><polyline points="8 12 11 15 16 9"/></svg> Selecionar
             </button>
-            <button class="btn btn-nm btn-sm" onclick="exportarEncontristas()" title="Exportar lista em CSV">
+            <button class="btn btn-nm btn-sm" onclick="exportarEncontristas()" title="Exportar relatório (PDF ou Excel)">
               <svg width="13" height="13"><use href="#ico-upload"/></svg> Exportar lista
             </button>
           </div>
@@ -2480,6 +2484,19 @@ tbody tr:hover{background:rgba(255,255,255,.45)}
   <button class="ok" onclick="_concluirAjusteMoldura()">Concluir</button>
 </div>
 
+<div class="m-ov hidden" id="m-exportar">
+  <div class="modal" style="max-width:420px;">
+    <div class="mh"><span class="mt">Exportar lista</span><button class="mc" onclick="closeM('m-exportar')" aria-label="Fechar"><svg width="13" height="13"><use href="#ico-x"/></svg></button></div>
+    <div class="mb">
+      <div style="font-size:.8rem;color:var(--light);line-height:1.5;margin-bottom:12px;">Todos os encontristas, com e sem cartas: quem escreveu, relação, horário, status e o servo de cada carta.</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <button class="btn btn-accent" onclick="exportarRelatorioPDF()">Relatório em PDF</button>
+        <button class="btn btn-nm" onclick="exportarRelatorioExcel()">Planilha Excel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="m-ov hidden" id="m-recado">
   <div class="modal">
     <div class="mh"><span class="mt">Deixar recado</span><button class="mc" onclick="closeM('m-recado')" aria-label="Fechar"><svg width="13" height="13"><use href="#ico-x"/></svg></button></div>
@@ -2790,6 +2807,7 @@ function onFbReady(fn){ _fbReady ? fn() : _fbResolvers.push(fn); }
       if(window._unsubCartas)   { window._unsubCartas();   window._unsubCartas=null; }
       if(window._unsubEncs)     { window._unsubEncs();     window._unsubEncs=null; }
       if(window._unsubPresenca) { window._unsubPresenca(); window._unsubPresenca=null; }
+      if(window._unsubResp)     { window._unsubResp();     window._unsubResp=null; }
 
       const {collection:col,query:q,orderBy:ob,onSnapshot:ons,doc:d,where:wh,getDocs:gds} = window._FB;
 
@@ -2975,6 +2993,14 @@ function onFbReady(fn){ _fbReady ? fn() : _fbResolvers.push(fn); }
         try{ _checarEncsNovos(snap); }catch(e){ console.warn('aviso de novos encontristas:',e.message); }
       });
 
+      // Responsável por cada encontrista (quem assumiu pela aba Encontristas)
+      try{
+        window._unsubResp = ons(col(db,'responsaveis'), snap=>{
+          _resp={}; snap.docs.forEach(x=>{ _resp[x.id]=x.data(); });
+          _onRespUpdate();
+        }, e=>console.warn('responsaveis:',e.message));
+      }catch(e){ console.warn('responsaveis:',e.message); }
+
       // Presença — REMOVIDO A PEDIDO: gerava leituras replicadas para todos
       // os clientes conectados a cada heartbeat, sem necessidade real para
       // o funcionamento do sistema (era só um "quem está online agora").
@@ -3007,6 +3033,13 @@ function onFbReady(fn){ _fbReady ? fn() : _fbResolvers.push(fn); }
       const d = snap.data();
       if(d.paleta){ palActive=d.paleta; applyPal(d.paleta); }
       if(d.templates){ templates=d.templates; renderTplGridEd?.(); }
+      if(d.pranchetaW && d.pranchetaH && CU && (d.pranchetaW!==window._PRANCH_W || d.pranchetaH!==window._PRANCH_H)){
+        try{
+          Object.assign(_cfg,{pranchetaW:d.pranchetaW,pranchetaH:d.pranchetaH,pranchetaNome:d.pranchetaNome,pranchetaWcm:d.pranchetaWcm,pranchetaHcm:d.pranchetaHcm});
+          aplicarPrancheta(d.pranchetaW,d.pranchetaH,d.pranchetaNome);
+          if(!document.getElementById('screen-editor').classList.contains('hidden')){ renderAllPages(); setCurPage(typeof curPage!=='undefined'?curPage:0); window.ajustarZoomTela?.(); }
+        }catch(_){}
+      }
       if(d.syncVersao && window._cargaCartas && CU && window._syncVersaoLocal?.()!==String(d.syncVersao)){
         _cfg.syncVersao=d.syncVersao;
         window._cargaCartas(true);
@@ -3710,7 +3743,9 @@ window.doLogout=async()=>{
     if(window._unsubCfg)    window._unsubCfg();
     if(window._unsubUser)   window._unsubUser();
     if(window._unsubCfgPublic) window._unsubCfgPublic();
+    if(window._unsubResp) { window._unsubResp(); window._unsubResp=null; }
   }catch(_e){}
+  _resp={};
   _pararRecados();
 
   // Limpa estado
@@ -3731,7 +3766,7 @@ window.doLogout=async()=>{
 //  Coleção "recados": um documento por destinatário, para que cada
 //  servo feche o seu sem afetar os outros.
 // ══════════════════════════════════════════════════════════
-let _recadosUnsub=null, _recadosMeus=[], _recadosVistos=new Set();
+let _recadosUnsub=null, _recadosMeus=[], _recadosVistos=new Set(), _recadosFechados=new Set();
 let _usrsCache=[], _recadosEnv=[];
 const _RECADO_MAX=300;
 function _recadoData(iso){
@@ -3755,10 +3790,15 @@ function _ouvirRecados(){
     _recadosUnsub=onSnapshot(
       query(collection(db,'recados'),where('paraUid','==',CU.uid),where('lido','==',false)),
       snap=>{
-        _recadosMeus=snap.docs.map(d=>({id:d.id,...d.data()}))
-          .sort((a,b)=>String(b.criadoEm||'').localeCompare(String(a.criadoEm||'')));
-        const novos=_recadosMeus.filter(r=>!_recadosVistos.has(r.id));
-        _recadosMeus.forEach(r=>_recadosVistos.add(r.id));
+        // Os que já estavam na tela continuam até o X, mesmo depois de marcados como lidos
+        const chegaram=snap.docs.map(d=>({id:d.id,...d.data()})).filter(r=>!_recadosFechados.has(r.id));
+        const mapa=new Map(_recadosMeus.map(r=>[r.id,r])); chegaram.forEach(r=>mapa.set(r.id,r));
+        _recadosMeus=[...mapa.values()].sort((a,b)=>String(b.criadoEm||'').localeCompare(String(a.criadoEm||'')));
+        const novos=chegaram.filter(r=>!_recadosVistos.has(r.id));
+        chegaram.forEach(r=>_recadosVistos.add(r.id));
+        // Mostrou uma vez = lido: no próximo login ele não aparece de novo
+        if(novos.length) setTimeout(()=>{ const {db,doc,updateDoc}=window._FB;
+          novos.forEach(r=>updateDoc(doc(db,'recados',r.id),{lido:true,lidoEm:new Date().toISOString()}).catch(e=>console.warn('recado (marcar lido):',e.message))); },1500);
         if(!primeira && novos.length) toast('Você recebeu um recado','wrn');
         primeira=false;
         _renderRecadosTopo();
@@ -3769,12 +3809,14 @@ function _ouvirRecados(){
 }
 function _pararRecados(){
   try{ if(_recadosUnsub) _recadosUnsub(); }catch(_){}
-  _recadosUnsub=null; _recadosMeus=[]; _recadosVistos=new Set(); _recadosEnv=[];
+  _recadosUnsub=null; _recadosMeus=[]; _recadosVistos=new Set(); _recadosFechados=new Set(); _recadosEnv=[];
   _renderRecadosTopo();
   _encsNovos=[]; _encsAvisoPronto=false; _renderEncsNovos();
+  _encsVistosRemoto=null; _encsVistosUid=null; _encsUltimoSnap=null;
 }
 // X da caixa vermelha: some na hora e fica marcado como lido para o admin.
 window.fecharRecado=async id=>{
+  _recadosFechados.add(id);
   _recadosMeus=_recadosMeus.filter(r=>r.id!==id);
   _renderRecadosTopo();
   try{
@@ -3791,33 +3833,65 @@ window.fecharRecado=async id=>{
 //  O X marca todos como vistos. Quem cadastrou não recebe o próprio aviso.
 // ══════════════════════════════════════════════════════════
 let _encsNovos=[];
-function _encsVistosKey(){ return 'vv_encs_vistos_'+(window._FB_CONFIG?.projectId||'')+'_'+(CU?.uid||''); }
+// Guarda os NOMES já vistos (não o id do documento, que muda se a lista for
+// reimportada) neste aparelho e também no banco (presenca/{uid}), para valer
+// em qualquer aparelho. O aviso aparece uma vez: assim que é mostrado já conta
+// como visto; o X só fecha na hora.
+let _encsVistosRemoto=null, _encsVistosUid=null, _encsUltimoSnap=null;
+function _encsVistosKey(){ return 'vv_encs_vistos2_'+(window._FB_CONFIG?.projectId||'')+'_'+(CU?.uid||''); }
 function _lerEncsVistos(){
   try{ const v=JSON.parse(localStorage.getItem(_encsVistosKey())||'null'); return Array.isArray(v)?new Set(v):null; }
   catch(_){ return null; }
 }
-function _gravarEncsVistos(set){ try{ localStorage.setItem(_encsVistosKey(),JSON.stringify([...set])); }catch(_){} }
+function _gravarEncsVistos(set,remoto){
+  try{ localStorage.setItem(_encsVistosKey(),JSON.stringify([...set])); }catch(_){}
+  if(remoto!==false && CU?.uid && window._FB){
+    try{ const {doc,setDoc}=window._FB; setDoc(doc(window._FB.db,'presenca',CU.uid),{encsVistos:[...set]},{merge:true}).catch(()=>{}); }catch(_){}
+  }
+}
+function _carregarVistosRemoto(){
+  if(_encsVistosUid===CU?.uid && _encsVistosRemoto) return _encsVistosRemoto;
+  _encsVistosUid=CU?.uid||null;
+  _encsVistosRemoto=(async()=>{
+    try{
+      const {doc,getDoc}=window._FB;
+      const sn=await getDoc(doc(window._FB.db,'presenca',CU.uid));
+      const v=sn.exists()?sn.data()?.encsVistos:null;
+      return Array.isArray(v)?v:null;
+    }catch(_){ return null; }
+  })();
+  return _encsVistosRemoto;
+}
 function _checarEncsNovos(snap){
+  if(!CU?.uid) return;
+  _encsUltimoSnap=snap;
+  _carregarVistosRemoto().then(rem=>{ if(_encsUltimoSnap===snap) _checarEncsNovos2(snap,rem); });
+}
+function _checarEncsNovos2(snap,remoto){
   if(!CU?.uid) return;
   const doCache=!!snap.metadata?.fromCache;
   const atuais=snap.docs.map(d=>({id:d.id,nome:d.data()?.nome||'Sem nome',local:!!d.metadata?.hasPendingWrites}));
+  atuais.forEach(e=>{ e.k=_normNome(e.nome); });
   let vistos=_lerEncsVistos();
+  if(remoto){ vistos=vistos||new Set(); remoto.forEach(k=>vistos.add(k)); }
   if(!vistos){
-    // Primeira vez neste aparelho: o que já existe conta como visto.
-    // Espera a lista vir do servidor para não tomar um cache parcial como base.
+    // Primeira vez (nenhum registro neste aparelho nem no banco): o que já existe conta como visto.
     if(doCache) return;
-    _gravarEncsVistos(new Set(atuais.map(e=>e.id)));
+    _gravarEncsVistos(new Set(atuais.map(e=>e.k)));
     _encsNovos=[]; _renderEncsNovos(); return;
   }
-  const idsAtuais=new Set(atuais.map(e=>e.id));
-  let mudou=false;
-  // cadastrados por este próprio aparelho não geram aviso
-  atuais.forEach(e=>{ if(e.local && !vistos.has(e.id)){ vistos.add(e.id); mudou=true; } });
-  // esquece os que foram excluídos, para a lista guardada não crescer para sempre
-  if(!doCache) [...vistos].forEach(id=>{ if(!idsAtuais.has(id)){ vistos.delete(id); mudou=true; } });
-  if(mudou) _gravarEncsVistos(vistos);
+  let mudou=!!remoto && remoto.length!==vistos.size;
+  atuais.forEach(e=>{ if(e.local && !vistos.has(e.k)){ vistos.add(e.k); mudou=true; } });
   const antes=new Set(_encsNovos.map(e=>e.id));
-  _encsNovos=atuais.filter(e=>!vistos.has(e.id))
+  const novos=atuais.filter(e=>!vistos.has(e.k));
+  // Mostrou uma vez = visto. Fica na tela até o X ou até sair.
+  novos.forEach(e=>{ vistos.add(e.k); mudou=true; });
+  if(!doCache){ const ks=new Set(atuais.map(e=>e.k)); [...vistos].forEach(k=>{ if(!ks.has(k)){ vistos.delete(k); mudou=true; } }); }
+  if(mudou) _gravarEncsVistos(vistos);
+  const mapa=new Map(_encsNovos.map(e=>[e.id,e]));
+  novos.forEach(e=>mapa.set(e.id,e));
+  const ids=new Set(atuais.map(e=>e.id));
+  _encsNovos=[...mapa.values()].filter(e=>ids.has(e.id))
     .sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR',{sensitivity:'base'}));
   const chegaram=_encsNovos.filter(e=>!antes.has(e.id)).length;
   if(chegaram && _encsAvisoPronto) toast(chegaram===1?'1 novo encontrista foi adicionado':`${chegaram} novos encontristas foram adicionados`,'wrn');
@@ -3837,12 +3911,7 @@ function _renderEncsNovos(){
       <button class="recado-x" onclick="fecharEncsNovos()" aria-label="Fechar aviso" title="Fechar"><svg width="13" height="13"><use href="#ico-x"/></svg></button>
     </div>`;
 }
-window.fecharEncsNovos=()=>{
-  const vistos=_lerEncsVistos()||new Set();
-  _encsNovos.forEach(e=>vistos.add(e.id));
-  _gravarEncsVistos(vistos);
-  _encsNovos=[]; _renderEncsNovos();
-};
+window.fecharEncsNovos=()=>{ _encsNovos=[]; _renderEncsNovos(); };
 
 // ── Admin: escrever ──
 function _recadoServos(){
@@ -4142,12 +4211,27 @@ window.alternarModoKids=async on=>{
   if(CU?.perfil!=='admin'){ toast('Ação restrita ao administrador','err'); return; }
   _cfg.modoKids=!!on;
   await DB.setCfg('modoKids',!!on);
-  if(on && !(_cfg.pranchetaW>_cfg.pranchetaH)){
-    if(confirm('Aplicar o papel A4 horizontal no editor agora?')){ setPranch(29.7,21,'A4 — Horizontal'); await salvarPrancheta(); }
-  }
+  // O papel acompanha o modo: Kids = A4 horizontal; normal = A4 vertical.
+  // O editor e a impressão/PDF usam esse mesmo tamanho.
+  const horiz=(_cfg.pranchetaW||794)>(_cfg.pranchetaH||1123);
+  if(on && !horiz) await _vvPapel(29.7,21,'A4 — Horizontal');
+  if(!on && horiz) await _vvPapel(21,29.7,'A4 — Vertical');
   await _aplicarModoKids();
-  toast(on?'Modo Kids ativado':'Modo Kids desativado','ok');
+  toast(on?'Modo Kids ativado · papel A4 horizontal':'Modo Kids desativado · papel A4 vertical','ok');
 };
+// Grava o tamanho do papel direto (sem depender da tela de Configurações estar aberta)
+async function _vvPapel(wCm,hCm,nome){
+  try{ if(document.getElementById('cfg-pranch-w')) setPranch(wCm,hCm,nome); }catch(_){}
+  const wPx=cm2px(wCm), hPx=cm2px(hCm);
+  _cfg={..._cfg,pranchetaW:wPx,pranchetaH:hPx,pranchetaNome:nome,pranchetaWcm:wCm,pranchetaHcm:hCm};
+  try{
+    const {doc,setDoc}=window._FB;
+    await setDoc(doc(window._FB.db,'config','site'),{pranchetaW:wPx,pranchetaH:hPx,pranchetaNome:nome,pranchetaWcm:wCm,pranchetaHcm:hCm},{merge:true});
+  }catch(e){ console.error('papel:',e); toast('Erro ao salvar o tamanho do papel','err'); }
+  aplicarPrancheta(wPx,hPx,nome);
+  try{ if(!document.getElementById('screen-editor').classList.contains('hidden')){ renderAllPages(); setCurPage(typeof curPage!=='undefined'?curPage:0); window.ajustarZoomTela?.(); } }catch(_){}
+}
+window._vvPapel=_vvPapel;
 function _renderCfgKids(){
   const box=document.getElementById('cfg-kids-body'); if(!box) return;
   const on=_modoKids();
@@ -4155,7 +4239,8 @@ function _renderCfgKids(){
   const lista=_molduras.filter(m=>!m.excluida).sort((a,b)=>(a.ordem||0)-(b.ordem||0));
   box.innerHTML=`
     <label class="kids-switch"><input type="checkbox" ${on?'checked':''} onchange="alternarModoKids(this.checked)"> Modo Kids ${on?'ativado':'desativado'}</label>
-    <div class="pp-hint" style="line-height:1.6;">Defina antes de abrir o recebimento de cartas e não troque no meio do evento.</div>
+    <div class="pp-hint" style="line-height:1.6;">Defina antes de abrir o recebimento de cartas e não troque no meio do evento. Ao ligar, o papel do editor e do PDF vira A4 horizontal; ao desligar, volta para A4 vertical.</div>
+    ${!on&&horiz?`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><span style="font-size:.8rem;font-weight:700;">Papel: <span style="color:var(--err)">horizontal</span></span><button class="btn btn-nm btn-sm" onclick="_vvPapel(21,29.7,'A4 — Vertical').then(_renderCfgKids)">Voltar para A4 vertical</button></div>`:''}
     ${on?`
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
         <span style="font-size:.8rem;font-weight:700;">Papel: ${horiz?'horizontal ✔':'<span style="color:var(--err)">vertical</span>'}</span>
@@ -4315,6 +4400,10 @@ function _autoAssignOrfas(){
     if(c.servoUid && c.para && !encParaServo[c.para]){
       encParaServo[c.para]={uid:c.servoUid,nome:c.servoNome};
     }
+  });
+  // Encontrista assumido pela aba Encontristas (ainda sem cartas dele)
+  cartasData.forEach(c=>{
+    if(c.para && !encParaServo[c.para]){ const r=_respPorNome(c.para); if(r?.uid) encParaServo[c.para]={uid:r.uid,nome:r.nome}; }
   });
   const orfas=cartasData.filter(c=>
     c.status==='pendente' && !c.servoUid && c.para && encParaServo[c.para]
@@ -4802,6 +4891,8 @@ window.assumirCarta=async id=>{
   }
 
   const paraEnc=c.para;
+  const _r=_respPorNome(paraEnc);
+  if(!isAdmin && _r?.uid && _r.uid!==CU?.uid){ toast(`${paraEnc} já está com ${_r.nome||'outro servo'}`,'wrn'); return; }
   // Servo assume só as pendentes do encontrista. Admin assume todas as livres.
   const cartasDoEnc=cartasData.filter(x=>{
     if(x.para!==paraEnc) return false;
@@ -4814,6 +4905,7 @@ window.assumirCarta=async id=>{
     count++;
   }
   if(count) await _garantirAcessoServo(paraEnc, cartasDoEnc[0].id);
+  if(count && !_r){ try{ await _registrarResp(_encPorNome(paraEnc)); }catch(_){} }
   toast(`${count} carta${count!==1?'s':''} de ${paraEnc} assumida${count!==1?'s':''}!`,'ok');
   closeM('m-carta');
 };
@@ -4853,6 +4945,8 @@ window.liberarCarta=async id=>{
   // Grava em segundo plano
   Promise.all(gravar.map(g=>DB.update('cartas',g.id,{servoUid:null,servoNome:null,status:g.status})))
     .then(()=>_revogarAcessoServo(carta.para,_uidAntes))
+    .then(()=>{ const e=_encPorNome(carta.para), r=e&&_respDe(e.id);
+      if(r && r.uid===_uidAntes && (CU?.perfil==='admin'||r.uid===CU?.uid)){ const {doc,deleteDoc}=window._FB; delete _resp[e.id]; return deleteDoc(doc(window._FB.db,'responsaveis',e.id)).catch(()=>{}); } })
     .catch(e=>{
       console.error('Erro ao liberar carta:',e.message);
       toast('Erro ao liberar — tente novamente','err');
@@ -5370,6 +5464,87 @@ function _envOk(d,i){
   return !!d?.contatos?.[i]?.enviado;
 }
 // Carta deste encontrista assumida pela serva logada (ou null)
+// ── Responsável pelo encontrista ──
+// responsaveis/{id do encontrista} = {uid, nome, para, em}. Quem assume passa
+// a receber sozinho as cartas que chegarem para ele.
+let _resp={};
+function _respDe(encId){ return encId?(_resp[encId]||null):null; }
+function _respPorNome(nomeEnc){ const e=_encPorNome(nomeEnc); return e?_respDe(e.id):null; }
+// Quem cuida do encontrista: o responsável registrado ou, se não houver, o servo das cartas
+function _donoEnc(nomeEnc){
+  const r=_respPorNome(nomeEnc); if(r?.uid) return {uid:r.uid,nome:r.nome};
+  const k=_normNome(nomeEnc);
+  const c=cartasData.find(x=>x.servoUid && _normNome(x.para)===k);
+  return c?{uid:c.servoUid,nome:c.servoNome}:null;
+}
+function _onRespUpdate(){
+  if(CU) _autoAssignOrfas();
+  const adminVisible=!document.getElementById('screen-admin').classList.contains('hidden');
+  if(adminVisible && document.querySelector('.admin-tab.act')?.id==='at-encontristas') renderAdminEncs();
+}
+async function _registrarResp(enc){
+  if(!enc||!CU) return false;
+  const atual=_respDe(enc.id);
+  if(atual?.uid===CU.uid) return true;
+  if(atual?.uid && CU.perfil!=='admin') return false;
+  const dado={uid:CU.uid,nome:CU.nome||CU.email||'Servo',para:String(enc.nome||'').slice(0,120),em:new Date().toISOString()};
+  const {doc,setDoc}=window._FB;
+  await setDoc(doc(window._FB.db,'responsaveis',enc.id),dado);
+  _resp[enc.id]=dado;
+  return true;
+}
+window.assumirEncontrista=async encId=>{
+  const enc=encsData.find(e=>e.id===encId); if(!enc||!CU) return;
+  const dono=_donoEnc(enc.nome);
+  if(dono && dono.uid!==CU.uid && CU.perfil!=='admin'){ toast(`${enc.nome} já está com ${dono.nome||'outro servo'}`,'wrn'); return; }
+  if(dono && dono.uid!==CU.uid && !confirm(`${enc.nome} está com ${dono.nome||'outro servo'}. Assumir mesmo assim?`)) return;
+  const btn=document.getElementById('encx-assumir-'+encId); if(btn){btn.disabled=true;btn.textContent='Assumindo...';}
+  try{
+    await _registrarResp(enc);
+    const k=_normNome(enc.nome);
+    const livres=cartasData.filter(c=>_normNome(c.para)===k && c.status==='pendente' && !c.servoUid);
+    for(const c of livres){
+      await DB.update('cartas',c.id,{servoUid:CU.uid,servoNome:CU.nome||CU.email,status:'em edição'});
+      Object.assign(c,{servoUid:CU.uid,servoNome:CU.nome||CU.email,status:'em edição'});
+    }
+    if(livres.length) await _garantirAcessoServo(enc.nome,livres[0].id);
+    toast(`Você assumiu ${enc.nome}`+(livres.length?` · ${livres.length} carta${livres.length!==1?'s':''} assumida${livres.length!==1?'s':''}`:' · as cartas que chegarem já vêm para você'),'ok');
+  }catch(e){
+    console.error('assumir encontrista:',e);
+    toast(/permission/i.test(e.message||'')?'Não deu para assumir: outro servo assumiu antes, ou falta publicar a regra "responsaveis"':'Erro ao assumir o encontrista','err');
+  }
+  renderAdminEncs();
+};
+window.liberarEncontrista=async encId=>{
+  const enc=encsData.find(e=>e.id===encId); if(!enc||!CU) return;
+  const r=_respDe(encId);
+  const uid=r?.uid||_donoEnc(enc.nome)?.uid;
+  if(!uid) return;
+  if(uid!==CU.uid && CU.perfil!=='admin'){ toast('Só quem assumiu ou o administrador pode liberar','wrn'); return; }
+  const k=_normNome(enc.nome);
+  const presas=cartasData.filter(c=>_normNome(c.para)===k && c.servoUid===uid && c.status!=='pronta');
+  if(!confirm(`Liberar ${enc.nome}?`+(presas.length?`\n\n${presas.length} carta${presas.length!==1?'s':''} em edição volta${presas.length!==1?'m':''} para "pendente".`:''))) return;
+  try{
+    const {doc,deleteDoc}=window._FB;
+    if(r) { await deleteDoc(doc(window._FB.db,'responsaveis',encId)); delete _resp[encId]; }
+    for(const c of presas){
+      await DB.update('cartas',c.id,{servoUid:null,servoNome:null,status:'pendente'});
+      Object.assign(c,{servoUid:null,servoNome:null,status:'pendente'});
+    }
+    _revogarAcessoServo(enc.nome,uid);
+    toast(`${enc.nome} liberado`,'ok');
+  }catch(e){ console.error('liberar encontrista:',e); toast('Erro ao liberar o encontrista','err'); }
+  renderAdminEncs();
+};
+function _blocoResp(e){
+  const dono=_donoEnc(e.nome);
+  const meu=dono&&dono.uid===CU?.uid, admin=CU?.perfil==='admin';
+  let txt, bt='';
+  if(!dono){ txt='Ninguém assumiu este encontrista ainda.'; bt=`<button class="btn btn-accent btn-sm" id="encx-assumir-${e.id}" onclick="event.stopPropagation();assumirEncontrista('${e.id}')"><svg width="13" height="13"><use href="#ico-user"/></svg> Assumir encontrista</button>`; }
+  else if(meu){ txt='<b>Você</b> é o responsável por este encontrista. As cartas que chegarem já vêm para você.'; bt=`<button class="btn btn-nm btn-sm" onclick="event.stopPropagation();liberarEncontrista('${e.id}')">Liberar</button>`; }
+  else { txt=`Responsável: <b>${esc(dono.nome||'Servo')}</b>`; if(admin) bt=`<button class="btn btn-nm btn-sm" onclick="event.stopPropagation();assumirEncontrista('${e.id}')">Assumir</button><button class="btn btn-nm btn-sm" onclick="event.stopPropagation();liberarEncontrista('${e.id}')">Liberar</button>`; }
+  return `<div class="encx-blk full encx-resp"><div class="encx-resp-t">${txt}</div><div class="encx-resp-b">${bt}</div></div>`;
+}
 function _minhaCartaDoEnc(nomeEnc){
   if(CU?.perfil!=='servo') return null;
   const k=_normNome(nomeEnc);
@@ -5406,12 +5581,14 @@ function renderAdminEncs(){
     const nCartas=cartasData.filter(c=>c.para===e.nome).length;
     const cts=d?.contatos||[];
     const env=cts.filter((c,i)=>_envOk(d,i)).length;
-    const podeMarcar=_ehAdmin||!!_minhaCartaDoEnc(e.nome);
+    const podeMarcar=_ehAdmin||!!_minhaCartaDoEnc(e.nome)||_respDe(e.id)?.uid===CU?.uid;
+    const _dono=_donoEnc(e.nome);
     const chips=[
       d?.sexo?`<span class="encx-chip ${sx}">${d.sexo}</span>`:'',
       d?.idade?`<span class="encx-chip">${esc(d.idade)} anos</span>`:'',
       d?.rede?`<span class="encx-chip">Rede ${esc(d.rede)}</span>`:'',
       `<span class="encx-chip cartas">${nCartas} carta${nCartas!==1?'s':''}</span>`,
+      _dono?`<span class="encx-chip ${_dono.uid===CU?.uid?'ok':''}">${_dono.uid===CU?.uid?'Com você':'Com '+esc(String(_dono.nome||'servo').split(' ')[0])}</span>`:'',
       cts.length?`<span class="encx-chip ${env===cts.length?'ok':'pend'}">Avisados ${env}/${cts.length}</span>`:'',
       !d?`<span class="encx-chip pend">Sem dados da inscrição</span>`:''
     ].join('');
@@ -5419,6 +5596,7 @@ function renderAdminEncs(){
     if(open){
       if(d){
         body=`<div class="encx-body">
+          ${_blocoResp(e)}
           <div class="encx-blk"><div class="encx-sec-t">Encontrista</div>
             ${comWa('Telefone',d.telefone,'do encontrista')}
             ${campo('Batizado',d.batizado)}${campo('Rede',d.rede)}
@@ -5446,7 +5624,7 @@ function renderAdminEncs(){
           </div>
         </div>`;
       } else {
-        body=`<div class="encx-body"><div class="encx-blk full"><div class="encx-hint">${_ehAdmin?'Este encontrista ainda não tem os dados da inscrição. Importe a planilha ou complete manualmente.':'Este encontrista ainda não tem os dados da inscrição.'}</div></div>
+        body=`<div class="encx-body">${_blocoResp(e)}<div class="encx-blk full"><div class="encx-hint">${_ehAdmin?'Este encontrista ainda não tem os dados da inscrição. Importe a planilha ou complete manualmente.':'Este encontrista ainda não tem os dados da inscrição.'}</div></div>
           <div class="encx-foot encx-admin-only">
             <button class="btn btn-accent btn-sm" onclick="encAbrirModal('${e.id}')">Completar dados</button>
             <button class="btn-danger" onclick="delEnc('${e.id}')"><svg width="13" height="13"><use href="#ico-trash"/></svg> Excluir</button>
@@ -5777,30 +5955,99 @@ async function _renomearEncontrista(id, antigo, novo){
   return {cartas:ids.length,paginas};
 }
 
-// ── Exportar lista de encontristas ──
+// ── Exportar lista de encontristas: relatório em PDF ou planilha Excel ──
+// Mostra TODOS os encontristas (com e sem cartas), quem escreveu, relação,
+// horário, status e o servo de cada carta. Não leva telefone de ninguém.
 window.exportarEncontristas=()=>{
-  if(!encsData.length){toast('Nenhum encontrista cadastrado','wrn');return;}
-  const linhas=[
-    ['Nome','Cartas recebidas','Cadastrado em'],
-    ...encsData.map(e=>{
-      const totalCartas=cartasData.filter(c=>c.para===e.nome).length;
-      return [
-        e.nome||'',
-        totalCartas,
-        e.criadoEm?.toDate?.()?.toLocaleDateString('pt-BR')||
-        (e.criadoEm?new Date(e.criadoEm).toLocaleDateString('pt-BR'):''),
-      ];
-    })
-  ];
-  const csv=linhas.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-  const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url;
-  a.download=`encontristas_${new Date().toLocaleDateString('pt-BR').replace(/\//g,'-')}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-  toast(`${encsData.length} encontristas exportados!`,'ok');
+  if(!encsData.length && !cartasData.length){toast('Nenhum encontrista cadastrado','wrn');return;}
+  openM('m-exportar');
+};
+function _vvQuando(v){
+  if(!v) return '';
+  let d=v?.toDate?.()||(typeof v==='number'?new Date(v):(v?.seconds?new Date(v.seconds*1000):new Date(v)));
+  return isNaN(d)?'':d.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+function _vvTempo(v){
+  const d=v?.toDate?.()||(typeof v==='number'?new Date(v):(v?.seconds?new Date(v.seconds*1000):new Date(v||0)));
+  return isNaN(d)?0:d.getTime();
+}
+function _vvRelatorioDados(){
+  const grupos=new Map();
+  const chave=n=>_normNome(n||'');
+  encsData.forEach(e=>{ const k=chave(e.nome); if(k&&!grupos.has(k)) grupos.set(k,{id:e.id,nome:e.nome,cartas:[]}); });
+  cartasData.forEach(c=>{
+    const k=chave(c.para)||'(sem destinatário)';
+    if(!grupos.has(k)) grupos.set(k,{id:null,nome:c.para||'(sem destinatário)',cartas:[],foraDaLista:true});
+    grupos.get(k).cartas.push(c);
+  });
+  const lista=[...grupos.values()].sort((a,b)=>String(a.nome).localeCompare(String(b.nome),'pt-BR',{sensitivity:'base'}));
+  lista.forEach(g=>{
+    g.cartas.sort((a,b)=>_vvTempo(a.criadoEm)-_vvTempo(b.criadoEm));
+    const servos=[]; g.cartas.forEach(c=>{ if(c.servoNome && !servos.includes(c.servoNome)) servos.push(c.servoNome); });
+    const r=g.id?_respDe(g.id):null;
+    if(r?.nome && !servos.includes(r.nome)) servos.unshift(r.nome);
+    g.servos=servos;
+    g.pend=g.cartas.filter(c=>c.status==='pendente').length;
+    g.edit=g.cartas.filter(c=>c.status==='em edição').length;
+    g.pront=g.cartas.filter(c=>c.status==='pronta').length;
+  });
+  return lista;
+}
+window.exportarRelatorioPDF=()=>{
+  closeM('m-exportar');
+  const w=window.open('','_blank');
+  if(!w){ toast('Permita pop-ups para este site e tente de novo','err'); return; }
+  const E=v=>esc(v==null?'':String(v));
+  const lista=_vvRelatorioDados();
+  const totC=lista.reduce((n,g)=>n+g.cartas.length,0);
+  const semCartas=lista.filter(g=>!g.cartas.length).length;
+  const semServo=lista.filter(g=>!g.servos.length).length;
+  const cores={'pronta':'#16a34a','em edição':'#2563eb','pendente':'#d97706'};
+  const blocos=lista.map(g=>{
+    let servoTxt;
+    if(!g.servos.length) servoTxt='<span class="am">ninguém assumiu ainda</span>';
+    else if(g.servos.length===1) servoTxt='Servo: <b>'+E(g.servos[0])+'</b>';
+    else servoTxt='Servos: <b>'+E(g.servos.join(', '))+'</b> <span class="am">(dividido)</span>';
+    const qtd=g.cartas.length+(g.cartas.length===1?' carta':' cartas');
+    const resumo=g.cartas.length?`<div class="res">${g.pront} pronta${g.pront!==1?'s':''} · ${g.edit} em edição · ${g.pend} pendente${g.pend!==1?'s':''}</div>`:'';
+    const itens=g.cartas.length?`<table><thead><tr><th>#</th><th>Quem escreveu</th><th>Relação</th><th>Enviada em</th><th>Status</th><th>Servo</th></tr></thead><tbody>`+
+      g.cartas.map((c,i)=>`<tr><td>${i+1}</td><td>${E(c.nome||'(sem nome)')}</td><td>${E(c.relacao||'—')}</td><td>${E(_vvQuando(c.criadoEm)||'—')}</td><td style="color:${cores[c.status]||'#555'};font-weight:700">${E(c.status||'?')}</td><td>${E(c.servoNome||'—')}</td></tr>`).join('')+
+      `</tbody></table>`:'<div class="vazio">Nenhuma carta recebida ainda</div>';
+    return `<section><div class="cab"><b>${E(g.nome)} — ${qtd}</b><span>${servoTxt}</span></div>${g.foraDaLista?'<div class="am" style="font-size:11px;margin-bottom:4px">Nome fora da lista de encontristas</div>':''}${resumo}${itens}</section>`;
+  }).join('');
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Relatório de Cartas por Encontrista</title>
+<style>body{font-family:Arial,sans-serif;padding:28px;color:#222}h1{font-size:20px;margin:0 0 2px}.sub{color:#666;font-size:13px;margin-bottom:20px}
+section{margin-bottom:20px;break-inside:avoid}.cab{border-bottom:2px solid #333;padding-bottom:4px;margin-bottom:6px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.cab b{font-size:15px}.cab span{font-size:12px;color:#555}.am{color:#d97706}.res{font-size:11px;color:#666;margin-bottom:4px}.vazio{font-size:12px;color:#999;font-style:italic;padding:2px 0}
+table{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}th:nth-child(1){width:4%}th:nth-child(2){width:27%}th:nth-child(3){width:15%}th:nth-child(4){width:16%}th:nth-child(5){width:12%}td{overflow-wrap:anywhere}th{text-align:left;font-size:10px;text-transform:uppercase;color:#777;border-bottom:1px solid #ddd;padding:3px 4px}td{padding:3px 4px;border-bottom:1px solid #f0f0f0;vertical-align:top}
+.bar{margin-bottom:16px}.bar button{font:600 13px Arial;padding:8px 14px;border-radius:8px;border:1px solid #bbb;background:#f4f4f4;cursor:pointer}
+@media print{body{padding:8px}.bar{display:none}}</style></head><body>
+<div class="bar"><button onclick="print()">Salvar em PDF / Imprimir</button></div>
+<h1>Relatório de Cartas por Encontrista</h1>
+<div class="sub">${lista.length} encontrista(s) · ${totC} carta(s) · ${semCartas} sem cartas · ${semServo} sem servo · Gerado em ${new Date().toLocaleString('pt-BR')}</div>
+${blocos}</body></html>`;
+  w.document.open(); w.document.write(html); w.document.close();
+  setTimeout(()=>{ try{ w.print(); }catch(_){} },500);
+};
+window.exportarRelatorioExcel=async()=>{
+  closeM('m-exportar');
+  try{ await _carregarSheetJS(); }catch(_){ toast('Não foi possível carregar o gerador de planilhas. Verifique a internet.','err'); return; }
+  const lista=_vvRelatorioDados();
+  const det=[['Encontrista','Qtd. cartas','Servo(s) responsável(is)','Quem escreveu','Relação','Enviada em','Status','Servo da carta']];
+  lista.forEach(g=>{
+    const sv=g.servos.join(', ')||'Ninguém assumiu';
+    if(!g.cartas.length) det.push([g.nome,0,sv,'(nenhuma carta ainda)','','','','']);
+    g.cartas.forEach(c=>det.push([g.nome,g.cartas.length,sv,c.nome||'(sem nome)',c.relacao||'',_vvQuando(c.criadoEm),c.status||'',c.servoNome||'']));
+  });
+  const res=[['Encontrista','Cartas','Prontas','Em edição','Pendentes','Servo(s) responsável(is)']];
+  lista.forEach(g=>res.push([g.nome,g.cartas.length,g.pront,g.edit,g.pend,g.servos.join(', ')||'Ninguém assumiu']));
+  const wb=XLSX.utils.book_new();
+  const s1=XLSX.utils.aoa_to_sheet(det); s1['!cols']=[{wch:28},{wch:10},{wch:24},{wch:28},{wch:14},{wch:16},{wch:11},{wch:20}];
+  const s2=XLSX.utils.aoa_to_sheet(res); s2['!cols']=[{wch:28},{wch:8},{wch:8},{wch:10},{wch:10},{wch:28}];
+  XLSX.utils.book_append_sheet(wb,s1,'Cartas por encontrista');
+  XLSX.utils.book_append_sheet(wb,s2,'Resumo');
+  XLSX.writeFile(wb,`relatorio-cartas_${new Date().toLocaleDateString('pt-BR').replace(/\//g,'-')}.xlsx`);
+  toast(`${lista.length} encontristas exportados!`,'ok');
 };
 
 // ── Apagar todos os encontristas — restrito a admin, com confirmação
@@ -6441,27 +6688,41 @@ window.togglePerfil=async(uid,cur)=>{
 };
 
 window.delUsr=async uid=>{
+  if(CU?.perfil!=='admin'){toast('Ação restrita ao administrador','err');return;}
   if(uid===CU?.uid){toast('Não pode excluir o próprio usuário','err');return;}
-  if(!confirm('Remover usuário? Ele será excluído completamente do sistema.'))return;
+  const u=(_usrsCache||[]).find(x=>(x.uid||x.id)===uid)||{};
+  const nome=u.nome||u.email||'este usuário';
+  if(!confirm(`Remover ${nome}?\n\nO acesso dele será bloqueado e as cartas que ainda não estão prontas voltam para "pendente".`))return;
   const btns=document.querySelectorAll(`[onclick="delUsr('${uid}')"]`);
   btns.forEach(b=>{b.disabled=true;b.textContent='...'});
+  const {db,doc,setDoc,deleteDoc}=window._FB;
+  let contaApagada=false;
+  // 1) Tenta apagar também a conta de login (função do Firebase, se existir)
   try{
     const token=await window._FB.auth.currentUser?.getIdToken();
+    const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),8000);
     const resp=await fetch('https://us-central1-vidavitoriosa01.cloudfunctions.net/deleteUser',{
-      method:'POST',
+      method:'POST',signal:ctl.signal,
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
       body:JSON.stringify({uid}),
     });
-    const result=await resp.json();
-    if(result.success){
-      toast('Usuário removido completamente!','ok');
-      renderUsrs();
-    } else {
-      toast('Erro: '+(result.error||'Erro desconhecido'),'err');
-    }
+    clearTimeout(t);
+    const result=await resp.json().catch(()=>({}));
+    contaApagada=!!result.success;
+  }catch(e){ console.warn('deleteUser (função) indisponível:',e.message); }
+  // 2) Remove do sistema pelo próprio site — funciona mesmo sem a função
+  try{
+    await setDoc(doc(db,'users_bloqueados',uid),{nome:u.nome||'',email:u.email||'',bloqueadoEm:new Date().toISOString(),por:CU.uid});
+    await deleteDoc(doc(db,'users',uid));
+    const presas=cartasData.filter(c=>c.servoUid===uid && c.status!=='pronta');
+    await Promise.all(presas.map(c=>DB.update('cartas',c.id,{servoUid:null,servoNome:null,status:'pendente'}).catch(()=>{})));
+    await Promise.all(Object.entries(_resp).filter(([,r])=>r.uid===uid).map(([id])=>deleteDoc(doc(db,'responsaveis',id)).catch(()=>{})));
+    _usrsCache=(_usrsCache||[]).filter(x=>(x.uid||x.id)!==uid);
+    toast(contaApagada?'Usuário removido completamente!':`${nome} foi removido e não consegue mais entrar.`,'ok');
+    renderUsrs();
   }catch(e){
-    console.error('deleteUser error:',e);
-    toast('Erro ao excluir: '+e.message,'err');
+    console.error('excluir usuário:',e);
+    toast(/permission/i.test(e.message||'')?'Sem permissão: publique as regras novas do Firestore':'Erro ao excluir: '+e.message,'err');
   }
   btns.forEach(b=>{b.disabled=false;b.innerHTML='<svg width="13" height="13"><use href="#ico-trash"/></svg>';});
 };
